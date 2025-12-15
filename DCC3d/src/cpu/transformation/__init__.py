@@ -50,20 +50,10 @@ spherical_coords, spherical_features = transformer(
 - median 中心计算方法不可微分，训练时会自动切换为 mean
 """
 
-from .coordinate_transformer import CoordinateTransformerTorch
-from .rotation_invariance import (
-    RotationInvarianceTorch,
-    generate_random_rotation_matrix_torch
-)
+from .coordinate_transformer import CoordinateTransformerTorch as CoordinateTransformer
+from .rotation_invariance import RotationInvarianceTorch as RotationInvariance
 
 __all__ = [
-    # 主要类
-    'CoordinateTransformerTorch',
-    'RotationInvarianceTorch',
-    
-    # 工具函数
-    'generate_random_rotation_matrix_torch',
+    "CoordinateTransformer",
+    "RotationInvariance",
 ]
-
-__version__ = '1.0.0'
-__author__ = 'DCConv Team'

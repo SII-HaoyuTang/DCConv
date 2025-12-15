@@ -61,43 +61,43 @@ class AggregationLayer:
 
         return output
 
-    def backward(self, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        r"""
-        反向传播 (Backward Pass).
+    # def backward(self, grad_output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    #     r"""
+    #     反向传播 (Backward Pass).
 
-        根据链式法则计算对输入 Features 和 Weights 的梯度。
+    #     根据链式法则计算对输入 Features 和 Weights 的梯度。
 
-        Args:
-            grad_output (torch.Tensor): 来自下一层的梯度 $\partial L / \partial Y$。
-                Shape: (Co, N)
+    #     Args:
+    #         grad_output (torch.Tensor): 来自下一层的梯度 $\partial L / \partial Y$。
+    #             Shape: (Co, N)
 
-        Returns:
-            grad_features (torch.Tensor): 对输入特征的梯度。Shape: (Ci, N, n)
-            grad_weights (torch.Tensor): 对权重的梯度。Shape: (Co, Ci, N, n)
-        """
-        if self.cache is None:
-            raise RuntimeError("Forward must be called before backward.")
+    #     Returns:
+    #         grad_features (torch.Tensor): 对输入特征的梯度。Shape: (Ci, N, n)
+    #         grad_weights (torch.Tensor): 对权重的梯度。Shape: (Co, Ci, N, n)
+    #     """
+    #     if self.cache is None:
+    #         raise RuntimeError("Forward must be called before backward.")
 
-        features, weights = self.cache
+    #     features, weights = self.cache
 
-        # -----------------------------------------------------------
-        # 推导逻辑:
-        # 1. grad_features (对 X 求导):
-        #    dL/dX_{c,u,k} = sum_o( dL/dY_{o,u} * dY_{o,u}/dX_{c,u,k} )
-        #    由 Forward 公式可知: dY_{o,u}/dX_{c,u,k} = W_{o,c,u,k}
-        #    所以: grad_X = sum_o( grad_out[o,u] * W[o,c,u,k] )
-        #    Einsum: 'ou, ocuk -> cuk'
-        # -----------------------------------------------------------
-        grad_features = torch.einsum("ou, ocuk -> cuk", grad_output, weights)
+    #     # -----------------------------------------------------------
+    #     # 推导逻辑:
+    #     # 1. grad_features (对 X 求导):
+    #     #    dL/dX_{c,u,k} = sum_o( dL/dY_{o,u} * dY_{o,u}/dX_{c,u,k} )
+    #     #    由 Forward 公式可知: dY_{o,u}/dX_{c,u,k} = W_{o,c,u,k}
+    #     #    所以: grad_X = sum_o( grad_out[o,u] * W[o,c,u,k] )
+    #     #    Einsum: 'ou, ocuk -> cuk'
+    #     # -----------------------------------------------------------
+    #     grad_features = torch.einsum("ou, ocuk -> cuk", grad_output, weights)
 
-        # -----------------------------------------------------------
-        # 2. grad_weights (对 W 求导):
-        #    dL/dW_{o,c,u,k} = dL/dY_{o,u} * dY_{o,u}/dW_{o,c,u,k}
-        #    由 Forward 公式可知: dY_{o,u}/dW_{o,c,u,k} = X_{c,u,k}
-        #    所以: grad_W = grad_out[o,u] * X[c,u,k]
-        #    注意这里没有求和，只是广播相乘 (Outer Product on specific dims)
-        #    Einsum: 'ou, cuk -> ocuk'
-        # -----------------------------------------------------------
-        grad_weights = torch.einsum("ou, cuk -> ocuk", grad_output, features)
+    #     # -----------------------------------------------------------
+    #     # 2. grad_weights (对 W 求导):
+    #     #    dL/dW_{o,c,u,k} = dL/dY_{o,u} * dY_{o,u}/dW_{o,c,u,k}
+    #     #    由 Forward 公式可知: dY_{o,u}/dW_{o,c,u,k} = X_{c,u,k}
+    #     #    所以: grad_W = grad_out[o,u] * X[c,u,k]
+    #     #    注意这里没有求和，只是广播相乘 (Outer Product on specific dims)
+    #     #    Einsum: 'ou, cuk -> ocuk'
+    #     # -----------------------------------------------------------
+    #     grad_weights = torch.einsum("ou, cuk -> ocuk", grad_output, features)
 
-        return grad_features, grad_weights
+    #     return grad_features, grad_weights

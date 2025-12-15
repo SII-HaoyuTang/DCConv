@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
-from Polynomials import HydrogenWaveFunction
+
+from .Polynomials import HydrogenWaveFunction
+
 
 class DCConv3dKernelUnitPolynomials(nn.Module):
     """
@@ -11,6 +13,7 @@ class DCConv3dKernelUnitPolynomials(nn.Module):
     :param L: Maximum azimuthal quantum number (l)
     :param M: Maximum magnetic quantum number (m)
     """
+
     def __init__(self, N: int, L: int, M: int):
         """
         Initializes the DCConv3d layer.
@@ -41,7 +44,9 @@ class DCConv3dKernelUnitPolynomials(nn.Module):
         """
 
         for n in range(1, self.N + 1):  # n should start from 1
-            for l in range(0, min(n, self.L + 1)):  # l should be less than or equal to n and L
+            for l in range(
+                0, min(n, self.L + 1)
+            ):  # l should be less than or equal to n and L
                 for m in range(-l, l + 1):  # m should be between -l and l
                     if abs(m) <= self.M:
                         self.polynomials.append(HydrogenWaveFunction(n, l, m))
@@ -63,11 +68,15 @@ class DCConv3dKernelUnitPolynomials(nn.Module):
             # Second loop over the convolution grids
             for j in range(n):
                 r, theta, phi = position[i, j, 0], position[i, j, 1], position[i, j, 2]
-                wave_function_values = torch.stack([
-                    polynomial.forward(r.item(), theta.item(), phi.item())
-                    for polynomial in self.polynomials
-                ])
-                weighted_sum = (wave_function_values * torch.tensor([c.item() for c in self.coefficients])).sum()
+                wave_function_values = torch.stack(
+                    [
+                        polynomial.forward(r, theta, phi)
+                        for polynomial in self.polynomials
+                    ]
+                )
+                # Claude Code suggests to do this, and you should check @SII-HaoyuTang
+                coeffs = torch.stack([c for c in self.coefficients])
+                weighted_sum = weighted_sum = (wave_function_values * coeffs).sum()
                 output[i, j] = weighted_sum
 
         return output

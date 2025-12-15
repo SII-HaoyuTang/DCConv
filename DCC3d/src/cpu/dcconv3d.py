@@ -21,7 +21,7 @@ class DistanceContainedConv3d(nn.Module):
         super(DistanceContainedConv3d, self).__init__()
         self.cotrans = CoordinateTransformer(use_pca=use_PCA)
         self.selector = SelectorFactory.get_selector(config)
-        self.kernel = DCConv3dKernelPolynomials(in_channels, out_channels, N, L, M)
+        self.kernel = DCConv3dKernelPolynomials(out_channels, in_channels, N, L, M)
         self.aggregation = AggregationLayer()
 
     def forward(
@@ -56,7 +56,9 @@ class DistanceContainedConv3d(nn.Module):
 
         # Step 3: 核权重生成 (Kernel Weight Generation)
         # 基于球极坐标生成动态卷积核权重
+        # print(spherical_coords[:, :, 0])
         kernel_weights = self.kernel.forward(spherical_coords)  # Shape: (Co, Ci, N, k)
+        print(f"kernel_weights.shape: {kernel_weights.shape}")
 
         # Step 4: 特征聚合 (Feature Aggregation)
         # 需要将 local_features 从 (N, k, Ci) 转换为 (Ci, N, k)

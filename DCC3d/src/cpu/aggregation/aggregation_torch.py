@@ -41,7 +41,7 @@ class AggregationLayer:
         if features.shape[0] != weights.shape[1]:
             raise ValueError(
                 f"Channel mismatch! Features has Ci={features.shape[0]}, "
-                f"but Weights expects Ci={weights.shape[1]}"
+                f"but Weights have Ci={weights.shape[1]}"
             )
         if features.shape[1:] != weights.shape[2:]:
             raise ValueError(

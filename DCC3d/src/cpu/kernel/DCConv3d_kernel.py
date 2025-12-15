@@ -68,6 +68,10 @@ class DCConv3dKernelUnitPolynomials(nn.Module):
             # Second loop over the convolution grids
             for j in range(n):
                 r, theta, phi = position[i, j, 0], position[i, j, 1], position[i, j, 2]
+                # @SII-HaoyuTang
+                r = float(r)
+                theta = float(theta)
+                phi = float(phi)
                 wave_function_values = torch.stack(
                     [
                         polynomial.forward(r, theta, phi)
@@ -76,7 +80,7 @@ class DCConv3dKernelUnitPolynomials(nn.Module):
                 )
                 # Claude Code suggests to do this, and you should check @SII-HaoyuTang
                 coeffs = torch.stack([c for c in self.coefficients])
-                weighted_sum = weighted_sum = (wave_function_values * coeffs).sum()
+                weighted_sum = (wave_function_values * coeffs).sum()
                 output[i, j] = weighted_sum
 
         return output

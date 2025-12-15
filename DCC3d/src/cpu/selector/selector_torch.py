@@ -227,6 +227,9 @@ class SelectorConfig(TypedDict):
     dilation: NotRequired[int]
 
 
+default_config = SelectorConfig(type=SelectorType.KNN, n=16)
+
+
 class SelectorFactory:
     @staticmethod
     def get_selector(config: SelectorConfig) -> BaseSelector:

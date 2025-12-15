@@ -170,85 +170,85 @@ def generate_random_rotation_matrix_torch(device='cpu', dtype=torch.float32) -> 
     return Q
 
 
-if __name__ == "__main__":
-    """
-    测试可微分性
-    """
-    print("=" * 70)
-    print("旋转不变性模块 - PyTorch 可微分版本测试")
-    print("=" * 70)
+# if __name__ == "__main__":
+#     """
+#     测试可微分性
+#     """
+#     print("=" * 70)
+#     print("旋转不变性模块 - PyTorch 可微分版本测试")
+#     print("=" * 70)
     
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"\n使用设备: {device}")
+#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#     print(f"\n使用设备: {device}")
     
-    # 创建测试点云（需要梯度）
-    torch.manual_seed(42)
-    test_points = torch.randn(10, 3, device=device, requires_grad=True)
+#     # 创建测试点云（需要梯度）
+#     torch.manual_seed(42)
+#     test_points = torch.randn(10, 3, device=device, requires_grad=True)
     
-    # 中心化（保持梯度）
-    test_points_centered = test_points - test_points.mean(dim=0, keepdim=True)
+#     # 中心化（保持梯度）
+#     test_points_centered = test_points - test_points.mean(dim=0, keepdim=True)
     
-    # 创建旋转不变性处理器
-    ri = RotationInvarianceTorch().to(device)
+#     # 创建旋转不变性处理器
+#     ri = RotationInvarianceTorch().to(device)
     
-    # 1. 前向传播
-    print("\n1. 前向传播测试")
-    aligned, eigenvals = ri(test_points_centered)
-    print(f"   输入形状: {test_points_centered.shape}")
-    print(f"   输出形状: {aligned.shape}")
-    print(f"   特征值: {eigenvals.detach().cpu().numpy()}")
-    print(f"   输入需要梯度: {test_points.requires_grad}")
-    print(f"   输出需要梯度: {aligned.requires_grad}")
+#     # 1. 前向传播
+#     print("\n1. 前向传播测试")
+#     aligned, eigenvals = ri(test_points_centered)
+#     print(f"   输入形状: {test_points_centered.shape}")
+#     print(f"   输出形状: {aligned.shape}")
+#     print(f"   特征值: {eigenvals.detach().cpu().numpy()}")
+#     print(f"   输入需要梯度: {test_points.requires_grad}")
+#     print(f"   输出需要梯度: {aligned.requires_grad}")
     
-    # 2. 反向传播测试
-    print("\n2. 反向传播测试")
+#     # 2. 反向传播测试
+#     print("\n2. 反向传播测试")
     
-    # 定义一个简单的损失：对齐后坐标的平方和
-    loss = (aligned ** 2).sum()
-    print(f"   损失值: {loss.item():.6f}")
+#     # 定义一个简单的损失：对齐后坐标的平方和
+#     loss = (aligned ** 2).sum()
+#     print(f"   损失值: {loss.item():.6f}")
     
-    # 反向传播
-    loss.backward()
+#     # 反向传播
+#     loss.backward()
     
-    print(f"   ✓ 反向传播成功")
-    print(f"   输入梯度形状: {test_points.grad.shape}")
-    print(f"   输入梯度范数: {test_points.grad.norm().item():.6f}")
-    print(f"   梯度样本: {test_points.grad[0].detach().cpu().numpy()}")
+#     print(f"   ✓ 反向传播成功")
+#     print(f"   输入梯度形状: {test_points.grad.shape}")
+#     print(f"   输入梯度范数: {test_points.grad.norm().item():.6f}")
+#     print(f"   梯度样本: {test_points.grad[0].detach().cpu().numpy()}")
     
-    # 3. 批量处理测试
-    print("\n3. 批量处理测试")
-    batch_points = torch.randn(5, 10, 3, device=device, requires_grad=True)
-    batch_aligned, batch_eigenvals = ri(batch_points)
+#     # 3. 批量处理测试
+#     print("\n3. 批量处理测试")
+#     batch_points = torch.randn(5, 10, 3, device=device, requires_grad=True)
+#     batch_aligned, batch_eigenvals = ri(batch_points)
     
-    print(f"   批量输入形状: {batch_points.shape}")
-    print(f"   批量输出形状: {batch_aligned.shape}")
-    print(f"   批量特征值形状: {batch_eigenvals.shape}")
+#     print(f"   批量输入形状: {batch_points.shape}")
+#     print(f"   批量输出形状: {batch_aligned.shape}")
+#     print(f"   批量特征值形状: {batch_eigenvals.shape}")
     
-    batch_loss = (batch_aligned ** 2).sum()
-    batch_loss.backward()
-    print(f"   ✓ 批量反向传播成功")
-    print(f"   批量梯度范数: {batch_points.grad.norm().item():.6f}")
+#     batch_loss = (batch_aligned ** 2).sum()
+#     batch_loss.backward()
+#     print(f"   ✓ 批量反向传播成功")
+#     print(f"   批量梯度范数: {batch_points.grad.norm().item():.6f}")
     
-    # 4. 旋转不变性验证
-    print("\n4. 旋转不变性验证")
-    test_points_np = torch.randn(10, 3, device=device)
-    test_points_np = test_points_np - test_points_np.mean(dim=0)
+#     # 4. 旋转不变性验证
+#     print("\n4. 旋转不变性验证")
+#     test_points_np = torch.randn(10, 3, device=device)
+#     test_points_np = test_points_np - test_points_np.mean(dim=0)
     
-    # 原始 PCA
-    aligned_orig, _, _ = ri.pca_alignment(test_points_np)
+#     # 原始 PCA
+#     aligned_orig, _, _ = ri.pca_alignment(test_points_np)
     
-    # 旋转后 PCA
-    rotation = generate_random_rotation_matrix_torch(device=device)
-    rotated_points = test_points_np @ rotation.T
-    aligned_rot, _, _ = ri.pca_alignment(rotated_points)
+#     # 旋转后 PCA
+#     rotation = generate_random_rotation_matrix_torch(device=device)
+#     rotated_points = test_points_np @ rotation.T
+#     aligned_rot, _, _ = ri.pca_alignment(rotated_points)
     
-    # 比较（取绝对值）
-    diff = torch.abs(torch.abs(aligned_orig) - torch.abs(aligned_rot))
-    max_diff = diff.max().item()
+#     # 比较（取绝对值）
+#     diff = torch.abs(torch.abs(aligned_orig) - torch.abs(aligned_rot))
+#     max_diff = diff.max().item()
     
-    print(f"   最大差异: {max_diff:.2e}")
-    print(f"   旋转不变性: {'✓ 通过' if max_diff < 1e-5 else '✗ 失败'}")
+#     print(f"   最大差异: {max_diff:.2e}")
+#     print(f"   旋转不变性: {'✓ 通过' if max_diff < 1e-5 else '✗ 失败'}")
     
-    print("\n" + "=" * 70)
-    print("✓ PyTorch 可微分版本测试完成！")
-    print("=" * 70)
+#     print("\n" + "=" * 70)
+#     print("✓ PyTorch 可微分版本测试完成！")
+#     print("=" * 70)

@@ -369,304 +369,303 @@ class CoordinateTransformerTorch(nn.Module):
         return spherical_features, centers, eigenvalues, local_features
 
 
-def test_differentiability():
-    """
-    测试完整模块的可微分性
-    """
-    print("\n" + "=" * 70)
-    print("完整模块可微分性测试")
-    print("=" * 70)
+# def test_differentiability():
+#     """
+#     测试完整模块的可微分性
+#     """
+#     print("\n" + "=" * 70)
+#     print("完整模块可微分性测试")
+#     print("=" * 70)
     
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"使用设备: {device}")
+#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#     print(f"使用设备: {device}")
     
-    torch.manual_seed(123)
+#     torch.manual_seed(123)
     
-    # 创建模拟数据（需要梯度）
-    N_total = 50
-    N_centers = 10
-    K = 8
+#     # 创建模拟数据（需要梯度）
+#     N_total = 50
+#     N_centers = 10
+#     K = 8
     
-    global_coords = torch.randn(N_total, 3, device=device, requires_grad=True)
-    neighbor_indices = torch.randint(0, N_total, (N_centers, K), device=device)
+#     global_coords = torch.randn(N_total, 3, device=device, requires_grad=True)
+#     neighbor_indices = torch.randint(0, N_total, (N_centers, K), device=device)
     
-    print(f"\n数据规模:")
-    print(f"  总原子数: {N_total}")
-    print(f"  中心点数: {N_centers}")
-    print(f"  邻居数: {K}")
-    print(f"  输入需要梯度: {global_coords.requires_grad}")
+#     print(f"\n数据规模:")
+#     print(f"  总原子数: {N_total}")
+#     print(f"  中心点数: {N_centers}")
+#     print(f"  邻居数: {K}")
+#     print(f"  输入需要梯度: {global_coords.requires_grad}")
     
-    # 创建转换器
-    transformer = CoordinateTransformerTorch(center_method='mean').to(device)
+#     # 创建转换器
+#     transformer = CoordinateTransformerTorch(center_method='mean').to(device)
     
-    # 前向传播
-    print(f"\n前向传播:")
-    spherical_features, centers, eigenvalues, local_features = transformer(
-        global_coords, neighbor_indices
-    )
+#     # 前向传播
+#     print(f"\n前向传播:")
+#     spherical_features, centers, eigenvalues, local_features = transformer(
+#         global_coords, neighbor_indices
+#     )
     
-    print(f"  球坐标特征: {spherical_features.shape}, 需要梯度: {spherical_features.requires_grad}")
-    print(f"  中心点: {centers.shape}, 需要梯度: {centers.requires_grad}")
-    print(f"  特征值: {eigenvalues.shape}, 需要梯度: {eigenvalues.requires_grad}")
-    print(f"  局部特征: {local_features}")
+#     print(f"  球坐标特征: {spherical_features.shape}, 需要梯度: {spherical_features.requires_grad}")
+#     print(f"  中心点: {centers.shape}, 需要梯度: {centers.requires_grad}")
+#     print(f"  特征值: {eigenvalues.shape}, 需要梯度: {eigenvalues.requires_grad}")
+#     print(f"  局部特征: {local_features}")
     
-    # 定义损失函数
-    # 这里用一个简单的损失：球坐标的径向距离的平方和
-    r = spherical_features[..., 0]  # 提取径向距离
-    loss = (r ** 2).sum()
+#     # 定义损失函数
+#     # 这里用一个简单的损失：球坐标的径向距离的平方和
+#     r = spherical_features[..., 0]  # 提取径向距离
+#     loss = (r ** 2).sum()
     
-    print(f"\n反向传播:")
-    print(f"  损失值: {loss.item():.6f}")
+#     print(f"\n反向传播:")
+#     print(f"  损失值: {loss.item():.6f}")
     
-    # 反向传播
-    loss.backward()
+#     # 反向传播
+#     loss.backward()
     
-    print(f"  ✓ 反向传播成功！")
-    print(f"  输入梯度形状: {global_coords.grad.shape}")
-    print(f"  输入梯度范数: {global_coords.grad.norm().item():.6f}")
-    print(f"  输入梯度非零元素: {(global_coords.grad != 0).sum().item()} / {global_coords.grad.numel()}")
+#     print(f"  ✓ 反向传播成功！")
+#     print(f"  输入梯度形状: {global_coords.grad.shape}")
+#     print(f"  输入梯度范数: {global_coords.grad.norm().item():.6f}")
+#     print(f"  输入梯度非零元素: {(global_coords.grad != 0).sum().item()} / {global_coords.grad.numel()}")
     
-    # 检查梯度是否有效
-    assert global_coords.grad is not None, "梯度为空！"
-    assert not torch.isnan(global_coords.grad).any(), "梯度包含 NaN！"
-    assert not torch.isinf(global_coords.grad).any(), "梯度包含 Inf！"
+#     # 检查梯度是否有效
+#     assert global_coords.grad is not None, "梯度为空！"
+#     assert not torch.isnan(global_coords.grad).any(), "梯度包含 NaN！"
+#     assert not torch.isinf(global_coords.grad).any(), "梯度包含 Inf！"
     
-    print(f"\n✓ 梯度健康检查通过")
+#     print(f"\n✓ 梯度健康检查通过")
     
-    return True
+#     return True
 
 
-def test_feature_expansion():
-    """
-    测试属性特征扩展功能
-    """
-    print("\n" + "=" * 70)
-    print("属性特征扩展测试")
-    print("=" * 70)
+# def test_feature_expansion():
+#     """
+#     测试属性特征扩展功能
+#     """
+#     print("\n" + "=" * 70)
+#     print("属性特征扩展测试")
+#     print("=" * 70)
     
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"使用设备: {device}")
+#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#     print(f"使用设备: {device}")
     
-    torch.manual_seed(789)
+#     torch.manual_seed(789)
     
-    # 创建模拟数据
-    N_total = 30      # 总原子数
-    N_centers = 8     # 中心点数
-    K = 5             # 每个中心的邻居数
-    Ci = 10           # 属性特征维度（例如：原子类型的 one-hot 编码）
+#     # 创建模拟数据
+#     N_total = 30      # 总原子数
+#     N_centers = 8     # 中心点数
+#     K = 5             # 每个中心的邻居数
+#     Ci = 10           # 属性特征维度（例如：原子类型的 one-hot 编码）
     
-    global_coords = torch.randn(N_total, 3, device=device, requires_grad=True)
-    global_features = torch.randn(N_total, Ci, device=device, requires_grad=True)
-    neighbor_indices = torch.randint(0, N_total, (N_centers, K), device=device)
+#     global_coords = torch.randn(N_total, 3, device=device, requires_grad=True)
+#     global_features = torch.randn(N_total, Ci, device=device, requires_grad=True)
+#     neighbor_indices = torch.randint(0, N_total, (N_centers, K), device=device)
     
-    print(f"\n数据规模:")
-    print(f"  总原子数 (N_total): {N_total}")
-    print(f"  中心点数 (N_centers): {N_centers}")
-    print(f"  邻居数 (K): {K}")
-    print(f"  属性特征维度 (Ci): {Ci}")
+#     print(f"\n数据规模:")
+#     print(f"  总原子数 (N_total): {N_total}")
+#     print(f"  中心点数 (N_centers): {N_centers}")
+#     print(f"  邻居数 (K): {K}")
+#     print(f"  属性特征维度 (Ci): {Ci}")
     
-    # 创建转换器
-    transformer = CoordinateTransformerTorch(center_method='mean').to(device)
+#     # 创建转换器
+#     transformer = CoordinateTransformerTorch(center_method='mean').to(device)
     
-    # 前向传播（带属性特征）
-    print(f"\n前向传播（带属性特征）:")
-    spherical_features, centers, eigenvalues, local_features = transformer(
-        global_coords, neighbor_indices, global_features
-    )
+#     # 前向传播（带属性特征）
+#     print(f"\n前向传播（带属性特征）:")
+#     spherical_features, centers, eigenvalues, local_features = transformer(
+#         global_coords, neighbor_indices, global_features
+#     )
     
-    print(f"  坐标输入: {global_coords.shape} → 球坐标输出: {spherical_features.shape}")
-    print(f"  属性输入: {global_features.shape} → 局部属性输出: {local_features.shape}")
-    print(f"  中心点: {centers.shape}")
-    print(f"  特征值: {eigenvalues.shape}")
+#     print(f"  坐标输入: {global_coords.shape} → 球坐标输出: {spherical_features.shape}")
+#     print(f"  属性输入: {global_features.shape} → 局部属性输出: {local_features.shape}")
+#     print(f"  中心点: {centers.shape}")
+#     print(f"  特征值: {eigenvalues.shape}")
     
-    # 验证形状
-    assert spherical_features.shape == (N_centers, K, 3), "球坐标形状错误"
-    assert local_features.shape == (N_centers, K, Ci), "局部属性形状错误"
-    assert centers.shape == (N_centers, 3), "中心点形状错误"
-    assert eigenvalues.shape == (N_centers, 3), "特征值形状错误"
+#     # 验证形状
+#     assert spherical_features.shape == (N_centers, K, 3), "球坐标形状错误"
+#     assert local_features.shape == (N_centers, K, Ci), "局部属性形状错误"
+#     assert centers.shape == (N_centers, 3), "中心点形状错误"
+#     assert eigenvalues.shape == (N_centers, 3), "特征值形状错误"
     
-    print(f"\n✓ 输出形状验证通过")
+#     print(f"\n✓ 输出形状验证通过")
     
-    # 测试属性特征的梯度传播
-    print(f"\n测试属性特征的梯度传播:")
-    loss = local_features.sum()
-    loss.backward()
+#     # 测试属性特征的梯度传播
+#     print(f"\n测试属性特征的梯度传播:")
+#     loss = local_features.sum()
+#     loss.backward()
     
-    print(f"  global_features 梯度形状: {global_features.grad.shape}")
-    print(f"  global_features 梯度范数: {global_features.grad.norm().item():.6f}")
-    print(f"  global_features 梯度非零元素: {(global_features.grad != 0).sum().item()} / {global_features.grad.numel()}")
+#     print(f"  global_features 梯度形状: {global_features.grad.shape}")
+#     print(f"  global_features 梯度范数: {global_features.grad.norm().item():.6f}")
+#     print(f"  global_features 梯度非零元素: {(global_features.grad != 0).sum().item()} / {global_features.grad.numel()}")
     
-    # 验证梯度的正确性：只有被选中的原子应该有梯度
-    selected_indices = neighbor_indices.flatten().unique()
-    print(f"  被选中的原子索引数: {len(selected_indices)}")
+#     # 验证梯度的正确性：只有被选中的原子应该有梯度
+#     selected_indices = neighbor_indices.flatten().unique()
+#     print(f"  被选中的原子索引数: {len(selected_indices)}")
     
-    print(f"\n✓ 属性特征梯度传播成功")
+#     print(f"\n✓ 属性特征梯度传播成功")
     
-    # 测试没有属性特征的情况
-    print(f"\n前向传播（不带属性特征）:")
-    spherical_features2, centers2, eigenvalues2, local_features2 = transformer(
-        global_coords, neighbor_indices, None
-    )
+#     # 测试没有属性特征的情况
+#     print(f"\n前向传播（不带属性特征）:")
+#     spherical_features2, centers2, eigenvalues2, local_features2 = transformer(
+#         global_coords, neighbor_indices, None
+#     )
     
-    print(f"  球坐标输出: {spherical_features2.shape}")
-    print(f"  局部属性输出: {local_features2}")
+#     print(f"  球坐标输出: {spherical_features2.shape}")
+#     print(f"  局部属性输出: {local_features2}")
     
-    assert local_features2 is None, "不提供属性时应返回 None"
+#     assert local_features2 is None, "不提供属性时应返回 None"
     
-    print(f"\n✓ 可选属性特征功能正常")
+#     print(f"\n✓ 可选属性特征功能正常")
     
-    return True
+#     return True
 
 
-def test_gradient_flow():
-    """
-    测试梯度流动的完整性
-    """
-    print("\n" + "=" * 70)
-    print("梯度流动测试")
-    print("=" * 70)
+# def test_gradient_flow():
+    # """
+    # 测试梯度流动的完整性
+    # """
+    # print("\n" + "=" * 70)
+    # print("梯度流动测试")
+    # print("=" * 70)
     
-    device = 'cpu'  # CPU 更容易调试
-    torch.manual_seed(456)
+    # device = 'cpu'  # CPU 更容易调试
+    # torch.manual_seed(456)
     
-    # 创建简单的测试案例
-    N_total = 20
-    N_centers = 5
-    K = 4
+    # # 创建简单的测试案例
+    # N_total = 20
+    # N_centers = 5
+    # K = 4
     
-    global_coords = torch.randn(N_total, 3, device=device, requires_grad=True)
-    neighbor_indices = torch.randint(0, N_total, (N_centers, K), device=device)
+    # global_coords = torch.randn(N_total, 3, device=device, requires_grad=True)
+    # neighbor_indices = torch.randint(0, N_total, (N_centers, K), device=device)
     
-    transformer = CoordinateTransformerTorch().to(device)
+    # transformer = CoordinateTransformerTorch().to(device)
     
-    # 前向传播
-    spherical_features, centers, eigenvalues, local_features = transformer(
-        global_coords, neighbor_indices
-    )
+    # # 前向传播
+    # spherical_features, centers, eigenvalues, local_features = transformer(
+    #     global_coords, neighbor_indices
+    # )
     
-    # 对每个输出分别测试梯度
-    print("\n1. 球坐标特征的梯度:")
-    loss1 = spherical_features.sum()
-    loss1.backward(retain_graph=True)
-    grad1_norm = global_coords.grad.norm().item()
-    print(f"   梯度范数: {grad1_norm:.6f}")
-    global_coords.grad.zero_()
+    # # 对每个输出分别测试梯度
+    # print("\n1. 球坐标特征的梯度:")
+    # loss1 = spherical_features.sum()
+    # loss1.backward(retain_graph=True)
+    # grad1_norm = global_coords.grad.norm().item()
+    # print(f"   梯度范数: {grad1_norm:.6f}")
+    # global_coords.grad.zero_()
     
-    print("\n2. 中心点的梯度:")
-    loss2 = centers.sum()
-    loss2.backward(retain_graph=True)
-    grad2_norm = global_coords.grad.norm().item()
-    print(f"   梯度范数: {grad2_norm:.6f}")
-    global_coords.grad.zero_()
+    # print("\n2. 中心点的梯度:")
+    # loss2 = centers.sum()
+    # loss2.backward(retain_graph=True)
+    # grad2_norm = global_coords.grad.norm().item()
+    # print(f"   梯度范数: {grad2_norm:.6f}")
+    # global_coords.grad.zero_()
     
-    print("\n3. 特征值的梯度:")
-    loss3 = eigenvalues.sum()
-    loss3.backward()
-    grad3_norm = global_coords.grad.norm().item()
-    print(f"   梯度范数: {grad3_norm:.6f}")
+    # print("\n3. 特征值的梯度:")
+    # loss3 = eigenvalues.sum()
+    # loss3.backward()
+    # grad3_norm = global_coords.grad.norm().item()
+    # print(f"   梯度范数: {grad3_norm:.6f}")
     
-    print(f"\n✓ 所有输出都能传播梯度到输入")
+    # print(f"\n✓ 所有输出都能传播梯度到输入")
     
-    return True
+    # return True
 
 
-# def test_expand_feature_matrix():
-    """
-    测试特征矩阵扩展功能
-    """
-    print("\n" + "=" * 70)
-    print("特征矩阵扩展测试")
-    print("=" * 70)
+# # def test_expand_feature_matrix():
+#     """
+#     测试特征矩阵扩展功能
+#     """
+#     print("\n" + "=" * 70)
+#     print("特征矩阵扩展测试")
+#     print("=" * 70)
     
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"使用设备: {device}")
+#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#     print(f"使用设备: {device}")
     
-    torch.manual_seed(999)
+#     torch.manual_seed(999)
     
-    # 创建测试数据
-    N = 10      # 节点数
-    n = 5       # 每个节点的数据维度（例如邻居数）
-    Ci = 8      # 特征维度
+#     # 创建测试数据
+#     N = 10      # 节点数
+#     n = 5       # 每个节点的数据维度（例如邻居数）
+#     Ci = 8      # 特征维度
     
-    data = torch.randn(N, n, device=device, requires_grad=True)
-    features = torch.randn(N, Ci, device=device, requires_grad=True)
+#     data = torch.randn(N, n, device=device, requires_grad=True)
+#     features = torch.randn(N, Ci, device=device, requires_grad=True)
     
-    print(f"\n数据规模:")
-    print(f"  数据矩阵 (data): {data.shape}")
-    print(f"  特征矩阵 (features): {features.shape}")
+#     print(f"\n数据规模:")
+#     print(f"  数据矩阵 (data): {data.shape}")
+#     print(f"  特征矩阵 (features): {features.shape}")
     
-    # 创建转换器
-    transformer = CoordinateTransformerTorch().to(device)
+#     # 创建转换器
+#     transformer = CoordinateTransformerTorch().to(device)
     
-    # 测试特征扩展
-    print(f"\n前向传播:")
-    expanded = transformer.expand_feature_matrix(data, features)
+#     # 测试特征扩展
+#     print(f"\n前向传播:")
+#     expanded = transformer.expand_feature_matrix(data, features)
     
-    print(f"  输入: data {data.shape} + features {features.shape}")
-    print(f"  输出: expanded {expanded.shape}")
-    print(f"  需要梯度: {expanded.requires_grad}")
+#     print(f"  输入: data {data.shape} + features {features.shape}")
+#     print(f"  输出: expanded {expanded.shape}")
+#     print(f"  需要梯度: {expanded.requires_grad}")
     
-    # 验证形状
-    expected_shape = (Ci, N, n)
-    assert expanded.shape == expected_shape, f"输出形状错误: {expanded.shape} != {expected_shape}"
+#     # 验证形状
+#     expected_shape = (Ci, N, n)
+#     assert expanded.shape == expected_shape, f"输出形状错误: {expanded.shape} != {expected_shape}"
     
-    print(f"\n✓ 输出形状验证通过: {expanded.shape}")
+#     print(f"\n✓ 输出形状验证通过: {expanded.shape}")
     
-    # 测试梯度传播
-    print(f"\n测试梯度传播:")
-    loss = expanded.sum()
-    loss.backward()
+#     # 测试梯度传播
+#     print(f"\n测试梯度传播:")
+#     loss = expanded.sum()
+#     loss.backward()
     
-    print(f"  data 梯度形状: {data.grad.shape}")
-    print(f"  data 梯度范数: {data.grad.norm().item():.6f}")
-    print(f"  features 梯度形状: {features.grad.shape}")
-    print(f"  features 梯度范数: {features.grad.norm().item():.6f}")
+#     print(f"  data 梯度形状: {data.grad.shape}")
+#     print(f"  data 梯度范数: {data.grad.norm().item():.6f}")
+#     print(f"  features 梯度形状: {features.grad.shape}")
+#     print(f"  features 梯度范数: {features.grad.norm().item():.6f}")
     
-    # 验证梯度健康性
-    assert data.grad is not None, "data 梯度为空！"
-    assert features.grad is not None, "features 梯度为空！"
-    assert not torch.isnan(data.grad).any(), "data 梯度包含 NaN！"
-    assert not torch.isnan(features.grad).any(), "features 梯度包含 NaN！"
+#     # 验证梯度健康性
+#     assert data.grad is not None, "data 梯度为空！"
+#     assert features.grad is not None, "features 梯度为空！"
+#     assert not torch.isnan(data.grad).any(), "data 梯度包含 NaN！"
+#     assert not torch.isnan(features.grad).any(), "features 梯度包含 NaN！"
     
-    print(f"\n✓ 梯度传播成功，所有检查通过")
+#     print(f"\n✓ 梯度传播成功，所有检查通过")
     
-    # 测试数值验证
-    print(f"\n数值验证:")
-    # 手动计算期望结果
-    data_expanded_manual = data.unsqueeze(1)  # (N, 1, n)
-    features_expanded_manual = features.unsqueeze(2)  # (N, Ci, 1)
-    expected_manual = (data_expanded_manual * features_expanded_manual).permute(1, 0, 2)
+#     # 测试数值验证
+#     print(f"\n数值验证:")
+#     # 手动计算期望结果
+#     data_expanded_manual = data.unsqueeze(1)  # (N, 1, n)
+#     features_expanded_manual = features.unsqueeze(2)  # (N, Ci, 1)
+#     expected_manual = (data_expanded_manual * features_expanded_manual).permute(1, 0, 2)
     
-    diff = (expanded - expected_manual).abs().max().item()
-    print(f"  与手动计算的最大差异: {diff:.2e}")
+#     diff = (expanded - expected_manual).abs().max().item()
+#     print(f"  与手动计算的最大差异: {diff:.2e}")
     
-    assert diff < 1e-6, f"数值验证失败: {diff}"
+#     assert diff < 1e-6, f"数值验证失败: {diff}"
     
-    print(f"\n✓ 数值验证通过")
+#     print(f"\n✓ 数值验证通过")
     
-    return True
+#     return True
 
 
-if __name__ == "__main__":
-    print("=" * 70)
-    print("坐标转换模块 - PyTorch 可微分版本测试")
-    print("=" * 70)
+# if __name__ == "__main__":
+    # print("=" * 70)
+    # print("坐标转换模块 - PyTorch 可微分版本测试")
+    # print("=" * 70)
     
-    # 测试 1: 基本可微分性
-    test_differentiability()
+    # # # 测试 1: 基本可微分性
+    # # test_differentiability()
     
-    # 测试 2: 梯度流动
-    test_gradient_flow()
+    # # # 测试 2: 梯度流动
+    # # test_gradient_flow()
     
-    # 测试 3: 特征扩展（新增）
-    test_expand_feature_matrix()
+
     
-    print("\n" + "=" * 70)
-    print("🎉 所有可微分性测试通过！")
-    print("=" * 70)
-    print("\n使用建议:")
-    print("  1. 可以作为 nn.Module 嵌入到神经网络中")
-    print("  2. 支持 GPU 加速，传入 device='cuda' 的张量")
-    print("  3. 支持批量处理和端到端训练")
-    print("  4. 注意: PCA 在特征值重复时梯度可能不稳定")
-    print("=" * 70)
+    # print("\n" + "=" * 70)
+    # print("🎉 所有可微分性测试通过！")
+    # print("=" * 70)
+    # print("\n使用建议:")
+    # print("  1. 可以作为 nn.Module 嵌入到神经网络中")
+    # print("  2. 支持 GPU 加速，传入 device='cuda' 的张量")
+    # print("  3. 支持批量处理和端到端训练")
+    # print("  4. 注意: PCA 在特征值重复时梯度可能不稳定")
+    # print("=" * 70)

@@ -1,0 +1,9 @@
+name: DCC3d
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy
+  - scipy
+  - torch
+prefix: /Users/sii-haoyutang/miniconda3/envs/DCC3d

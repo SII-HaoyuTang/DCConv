@@ -58,13 +58,14 @@ class DCConv3dKernelUnitPolynomials(nn.Module):
             the coordinates (r, theta, phi).
         :return: The output tensor of shape (OutN, conv_nums)
         """
+        # TODO: Implement the function parallel
         output: torch.Tensor = torch.stack(
             [
                 polynomial.apply(position) * coeffs
                 for polynomial, coeffs in zip(self.polynomials, self.coefficients)
             ],
             dim=0,
-        ).sum(dim=0)
+        ).sum(dim=0)  # 多项式的每一项相加在一起
 
         return output
 
@@ -114,6 +115,7 @@ class DCConv3dKernelPolynomials(nn.Module):
         OutN, n, _ = position.shape
         output = torch.zeros((self.OutC, self.InC, OutN, n), dtype=position.dtype)
 
+        # TODO: Implement the function parallel
         # Loop over the output channels
         for i in range(self.OutC):
             # Loop over the input channels

@@ -197,3 +197,24 @@ class HydrogenWaveFunction:
                 return np.sqrt(2) * (-1) ** m * np.imag(1j * m * y_lm)
             else:
                 return 0.0
+
+if __name__ == "__main__":
+    # 创建 HydrogenWaveFunction 的一个实例，设置 n=2, l=1, m=0
+    wave_function = HydrogenWaveFunction(n=2, l=1, m=0)
+
+    # 给定空间坐标
+    r, theta, phi = [1.0], [math.pi / 4], [math.pi / 2]
+
+    # 计算波函数值
+    psi_value = wave_function.forward(r, theta, phi)
+    print(f"Wave function value at (r={r}, theta={theta}, phi={phi}): {psi_value}")
+
+    # 计算波函数相对于 r, theta, 和 phi 的导数
+    dpsi_dr = wave_function.backward(r, theta, phi, "r")
+    dpsi_dtheta = wave_function.backward(r, theta, phi, "theta")
+    dpsi_dphi = wave_function.backward(r, theta, phi, "phi")
+
+    # 输出导数值
+    print(f"Derivative with respect to r: {dpsi_dr}")
+    print(f"Derivative with respect to theta: {dpsi_dtheta}")
+    print(f"Derivative with respect to phi: {dpsi_dphi}")

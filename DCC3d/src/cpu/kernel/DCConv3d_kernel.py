@@ -1,9 +1,9 @@
+from typing import List
+
 import torch
 import torch.nn as nn
 
 from .polynomials_torch import HWFR
-
-from typing import List
 
 
 class DCConv3dKernelUnitPolynomials(nn.Module):
@@ -60,8 +60,8 @@ class DCConv3dKernelUnitPolynomials(nn.Module):
         """
         output: torch.Tensor = torch.stack(
             [
-                polynomial(position) * coeffs
-                for polynomial, coeffs in (self.polynomials, self.coefficients)
+                polynomial.apply(position) * coeffs
+                for polynomial, coeffs in zip(self.polynomials, self.coefficients)
             ],
             dim=0,
         ).sum(dim=0)

@@ -1,13 +1,13 @@
 import math
 from collections.abc import Callable
+from typing import Dict, Tuple, Type
 
 import numpy as np
 import torch
-from typing import Dict, Tuple, Type
 
 
 class AssociatedLaguerrePoly:
-    """
+    r"""
     适用于氢原子与导数计算的高效连带拉盖尔多项式实现。
 
     此类提供了计算特定阶数和次数的连带拉盖尔多项式的功能。通过预先计算系数并使用霍纳法进行数值稳定性的提升，该类能够高效地评估给定x值处的多项式值。
@@ -36,18 +36,19 @@ class AssociatedLaguerrePoly:
             raise ValueError(f"n and l must be integers, got {n} and {k}")
         self.n: int = n
         self.k: int = k
+        self.poly_equal_zero = False
         self.dtype: torch.dtype = dtype
 
         # 预计算系数
         self.coefficients: torch.Tensor = self._compute_coefficients_vectorized()
 
-    def _compute_coefficients_vectorized(self) -> torch.Tensor:
+    def _compute_coefficients_vectorized(self) -> torch.Tensor | None:
         """
         计算并返回向量化的系数。
 
         该函数通过预计算阶乘值来加速系数的计算过程。它首先生成一个从0到n+2的阶乘字典，以确保后续计算中所需的所有阶乘值都已准备好。
         接着，使用PyTorch库中的张量操作来高效地处理数组运算，包括确定符号、计算不同部分的阶乘以及最终合成每个系数。
-        最后，根据给定公式组合这些值，得到最终的系数向量。
+        最后，根据给定公式组合这些值，得到最终的系数向量。如果 n - k < 0，则返回 None。
 
         :returns: 计算得到的系数向量
         :rtype: torch.Tensor
@@ -62,6 +63,9 @@ class AssociatedLaguerrePoly:
 
         factorial_cache: Dict[int, int] = _precompute_factorials()
 
+        if self.n - self.k + 1 <= 0:
+            self.poly_equal_zero = True
+            return None
         m: torch.Tensor = torch.arange(self.n - self.k + 1, dtype=self.dtype)
 
         # 计算 (-1)^m
@@ -115,6 +119,9 @@ class AssociatedLaguerrePoly:
         Raises:
             RuntimeError: If there is a mismatch in data types that cannot be resolved.
         """
+        if self.poly_equal_zero:
+            return torch.zeros_like(x)
+
         # 确保数据类型匹配
         x: torch.Tensor = x.to(self.dtype)
         coeffs: torch.Tensor = self.coefficients.to(x.device)
@@ -123,14 +130,14 @@ class AssociatedLaguerrePoly:
         # 对于多项式 a_n*x^n + ... + a_1*x + a_0
         # 从最高次项开始计算
         result: torch.Tensor = torch.zeros_like(x)
-        for i in range(self.n, -1, -1):
+        for i in range(self.n - self.k, -1, -1):
             result: torch.Tensor = result * x + coeffs[i]
 
         return result
 
 
 class SphericalHarmonicFunc:
-    """
+    r"""
     在这个类中实现了球谐函数，其可以被表示为：
      Y_l^m(θ, φ) = N_l^m * P_l^m(cosθ) * exp(imφ)
      见徐光宪《量子化学——基本原理与从头计算法（上册）》P.130 式（3.5.10）
@@ -208,7 +215,7 @@ class SphericalHarmonicFunc:
                 * math.factorial(k - m_abs)
                 / (4 * math.pi * math.factorial(k + m_abs))
             )
-            return torch.Tensor(norm)
+            return torch.Tensor([norm])
 
         elif self.normalization == "racah":
             # Racah 归一化，无 Condon-Shortley 相位因子
@@ -217,7 +224,7 @@ class SphericalHarmonicFunc:
                 * math.factorial(k - m_abs)
                 / (4 * math.pi * math.factorial(k + m_abs))
             )
-            return torch.Tensor(norm)
+            return torch.Tensor([norm])
 
         elif self.normalization == "schmidt":
             # Schmidt 半归一化
@@ -230,7 +237,7 @@ class SphericalHarmonicFunc:
                     * math.factorial(k - m_abs)
                     / (4 * math.pi * math.factorial(k + m_abs))
                 )
-            return torch.Tensor(norm)
+            return torch.Tensor([norm])
 
         else:
             raise ValueError(f"Unknown normalization: {self.normalization}")
@@ -416,10 +423,10 @@ class SphericalHarmonicFunc:
 
         return result
 
-    def gradient(
+    def backward(
         self, theta: torch.Tensor, phi: torch.Tensor, saved: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
+        r"""
         计算球谐函数的梯度（对 θ 和 φ 的偏导数），在m>=0的情况下有：
         \frac{dY}{d\theta} = N\cos(m\phi)\frac{dP_l^m}{d\cos\theta} \frac{d\cos\theta}{d\theta}
                            = -N\cos(m\phi)\sin(\theta) \frac{dP_l^m}{d\cos\theta}
@@ -475,7 +482,7 @@ class SphericalHarmonicFunc:
         cos_mphi: torch.Tensor = torch.cos(mphi)
         # 同上
         cos_mphi_judge: torch.Tensor = torch.where(
-            10e-5 > cos_mphi > -10e-5, torch.inf, cos_mphi
+            torch.logical_and(-10e-5 < cos_mphi, cos_mphi < 10e-5), torch.inf, cos_mphi
         )
 
         # 提取多项式部分导数
@@ -535,7 +542,7 @@ class SphericalHarmonicFunc:
         sin_mphi: torch.Tensor = torch.cos(mphi)
         # 同上
         sin_mphi_judge: torch.Tensor = torch.where(
-            10e-5 > sin_mphi > -10e-5, torch.inf, sin_mphi
+            torch.logical_and(-10e-5 < sin_mphi, sin_mphi < 10e-5), torch.inf, sin_mphi
         )
 
         # 提取多项式部分导数
@@ -595,11 +602,6 @@ class AssociatedLaguerreSeries:
     def __init__(
         self, max_n: int = 7, max_k: int = 7, dtype: torch.dtype = torch.float32
     ):
-        if not (isinstance(max_n, int) and max_n > 0):
-            raise ValueError("n must be a positive integer")
-        if not (isinstance(max_k, int) and 0 <= max_k < max_n):
-            raise ValueError("l must be an integer between 0 and n-1")
-
         self.max_n: int = max_n
         self.max_k: int = max_k
         self.dtype: torch.dtype = dtype
@@ -646,7 +648,7 @@ class AssociatedLaguerreSeries:
             dictionary operations.
         """
         for n in range(self.max_n):
-            for k in range(self.max_l + 1):
+            for k in range(self.max_k + 1):
                 if self.check(n + 1, k):
                     continue
                 else:
@@ -669,10 +671,10 @@ class AssociatedLaguerreSeries:
         Returns:
         bool: True if the associated Laguerre series for n and k is present, False otherwise.
         """
-        if not self.associated_laguerre_series[(n, k)]:
-            return False
-        else:
+        if (n, k) in self.associated_laguerre_series:
             return True
+        else:
+            return False
 
     def extend(self, dest_n: int, dest_l: int) -> None:
         """
@@ -688,12 +690,12 @@ class AssociatedLaguerreSeries:
         Returns:
         None
         """
-        self.max_l = max(dest_l, self.max_k)
+        self.max_k = max(dest_l, self.max_k)
         self.max_n = max(dest_n, self.max_n)
         self._update_associated_laguerre_funcs()
 
     def __call__(self, n: int, k: int) -> Callable:
-        if n > self.max_n or k > self.max_l:
+        if n > self.max_n or k > self.max_k:
             self.extend(n, k)
         return self.associated_laguerre_series[(n, k)]
 
@@ -746,8 +748,9 @@ class SphericalHarmonicSeries:
         spherical_harmonic_series: Dict[tuple[int, int], Callable] = {}
         for k in range(self.max_k + 1):
             for m in range(-self.max_m, self.max_m + 1):
-                func: Callable = SphericalHarmonicFunc(k, m, self.dtype)
-                spherical_harmonic_series[(k, m)] = func
+                if abs(m) <= k:
+                    func: Callable = SphericalHarmonicFunc(k, m, self.dtype)
+                    spherical_harmonic_series[(k, m)] = func
         return spherical_harmonic_series
 
     def _update_spherical_harmonic_funcs(self) -> None:
@@ -785,10 +788,10 @@ class SphericalHarmonicSeries:
         Returns:
             bool: True if the spherical harmonic series for the specified k and m exists, False otherwise.
         """
-        if not self.spherical_harmonic_series[(k, m)]:
-            return False
-        else:
+        if (k, m) in self.spherical_harmonic_series:
             return True
+        else:
+            return False
 
     def extend(self, dest_k: int, dest_m: int) -> None:
         """
@@ -878,7 +881,7 @@ class HydrogenWaveFunc:
         )
 
         self.radial_normalization_factor: torch.Tensor = torch.Tensor(
-            np.sqrt(math.factorial(n - k - 1) / (2.0 * n * math.factorial(n + k)))
+            [np.sqrt(math.factorial(n - k - 1) / (2.0 * n * math.factorial(n + k)))]
         )
 
     def forward(
@@ -963,7 +966,7 @@ class HydrogenWaveFunc:
         """
         position, radial_part, laguerre_value, angular_part = saved_data
 
-        r, theta, phi = position[:, 0], position[:, 1], position[:, 2]
+        r, theta, phi = position[:, :, 0], position[:, :, 1], position[:, :, 2]
 
         # 径向部分  \frac{\partial \exp^{-r/2}*r^l*L}{\partial r} = l*\exp^{-r/2}*r^{l-1}*L - 0.5 * \exp^{-r/2}*r^l*L + \exp^{-r/2}*r^l*L'
         # 将上式中可以被提出的前向部分提出，就得到了实际使用的表达式
@@ -972,8 +975,8 @@ class HydrogenWaveFunc:
         )
 
         # 角向部分
-        dangular_dtheta, dangular_dphi = self.spherical_harmonic(
-            theta, phi, saved_data[2]
+        dangular_dtheta, dangular_dphi = self.spherical_harmonic.backward(
+            theta, phi, angular_part
         )
 
         # 计算梯度
@@ -981,7 +984,7 @@ class HydrogenWaveFunc:
         dpsi_dtheta = grad_output * (radial_part * dangular_dtheta)
         dpsi_dphi = grad_output * (radial_part * dangular_dphi)
 
-        result = torch.stack([dpsi_dr, dpsi_dtheta, dpsi_dphi], dim=0)
+        result = torch.stack([dpsi_dr, dpsi_dtheta, dpsi_dphi], dim=-1)
 
         return result
 
@@ -1030,8 +1033,9 @@ class HydrogenWaveFuncsSeries:
         for n in range(self.max_n):
             for k in range(self.max_k + 1):
                 for m in range(-self.max_m, self.max_m + 1):
-                    func: Callable = HydrogenWaveFunc(n + 1, k, m, self.dtype)
-                    hydrogen_wave_funcs_series[(n + 1, k, m)] = func
+                    if abs(m) <= k and k < n + 1:
+                        func: Callable = HydrogenWaveFunc(n + 1, k, m, self.dtype)
+                        hydrogen_wave_funcs_series[(n + 1, k, m)] = func
         return hydrogen_wave_funcs_series
 
     def _update_hydrogen_wave_funcs(self) -> None:
@@ -1115,25 +1119,39 @@ class HydrogenWaveFunctionRegistry:
         动态创建氢原子波函数的 autograd Function
         """
         # 定义类名
-        class_name: str = f"HydrogenWaveFunction_{n}_{k}_{m}"
+        # class_name: str = f"HydrogenWaveFunction_{n}_{k}_{m}"
 
         # 使用 type() 动态创建类
-        HydrogenFunction: Type[torch.autograd.Function] = type[torch.autograd.Function](
-            class_name,
-            (torch.autograd.Function,),
-            {
-                # 类属性
-                "n": n,
-                "k": k,
-                "m": m,
-                # 静态方法
-                "forward": staticmethod(cls._hydrogen_forward),
-                "backward": staticmethod(cls._hydrogen_backward),
-                # 元类信息
-                "__module__": __name__,
-                "__doc__": f"Hydrogen wave function for n={n}, k={k}, m={m}",
-            },
-        )
+        # HydrogenFunction: Type[torch.autograd.Function] = type[torch.autograd.Function](
+        #     class_name,
+        #     (torch.autograd.Function,),
+        #     {
+        #         # 类属性
+        #         "n": n,
+        #         "k": k,
+        #         "m": m,
+        #         # 静态方法
+        #         "forward": staticmethod(cls._hydrogen_forward),
+        #         "backward": staticmethod(cls._hydrogen_backward),
+        #         # 元类信息
+        #         "__module__": __name__,
+        #         "__doc__": f"Hydrogen wave function for n={n}, k={k}, m={m}",
+        #     },
+        # )
+
+        class HydrogenFunction(torch.autograd.Function):
+            @staticmethod
+            def forward(ctx, position: torch.Tensor):
+                ctx._n = n
+                ctx._k = k
+                ctx._m = m
+                result = cls._hydrogen_forward(ctx, position)
+                return result
+
+            @staticmethod
+            def backward(ctx, grad_output: torch.Tensor):
+                grad_position = cls._hydrogen_backward(ctx, grad_output)
+                return grad_position
 
         return HydrogenFunction
 
@@ -1155,11 +1173,11 @@ class HydrogenWaveFunctionRegistry:
         """
         # 获取量子数（通过 ctx 传递）
         ctx.n = ctx._n
-        ctx.l = ctx._l
+        ctx.k = ctx._k
         ctx.m = ctx._m
 
         phi, radial, laguerre_value, angular = hydrogen_wave_funcs_series(
-            ctx.n, ctx.l, ctx.m
+            ctx.n, ctx.k, ctx.m
         )(position)
 
         # 保存反向传播需要的信息
@@ -1184,14 +1202,14 @@ class HydrogenWaveFunctionRegistry:
         """
         # 获取量子数（通过 ctx 传递）
         ctx.n = ctx._n
-        ctx.l = ctx._l
+        ctx.k = ctx._k
         ctx.m = ctx._m
 
-        position_grad = hydrogen_wave_funcs_series(ctx.n, ctx.l, ctx.m)(
+        position_grad = hydrogen_wave_funcs_series(ctx.n, ctx.k, ctx.m).backward(
             grad_output, ctx.saved_tensors
         )
 
-        return position_grad
+        return position_grad, None, None, None
 
     def __call__(self, n: int, k: int, m: int):
         if not (isinstance(n, int) and n > 0):

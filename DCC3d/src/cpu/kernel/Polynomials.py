@@ -77,7 +77,7 @@ class HydrogenWaveFunction:
         :param phi: Azimuthal angle in radians
         :return: The value of the angular part
         """
-        y_lm = sph_harm_y(m, l, phi, theta)
+        y_lm = sph_harm_y(l, m, theta, phi)
         if m > 0:
             return np.sqrt(2) * (-1) ** m * np.real(y_lm)
         elif m < 0:
@@ -143,7 +143,7 @@ class HydrogenWaveFunction:
             * (2.0 * r / n) ** l
             * (
                 laguerre_derivative * (2.0 / n)
-                + laguerre_polynomial * (2.0 * l / r - 1.0 / n)
+                + laguerre_polynomial * (l / r - 1.0 / n)
             )
             * exponential_term
         )
@@ -161,42 +161,26 @@ class HydrogenWaveFunction:
         :param gradient: The gradient with respect to which the derivative is computed ('theta' or 'phi')
         :return: The derivative of the angular part
         """
-        y_lm = sph_harm_y(m, l, phi, theta)
+        # [修复] 使用 diff_n=1 直接获取导数，避免手动公式错误
+        # sph_harm_y 返回 (val, dval_dtheta, dval_dphi)
+        result = sph_harm_y(l, m, theta, phi, diff_n=1)
+        grads = result[1]
+        
+        dy_dtheta = grads[0] # 对 theta 的导数
+        dy_dphi = grads[1]   # 对 phi 的导数
+        # 选择需要的导数分量
         if gradient == "theta":
-            if m > 0:
-                return (
-                    np.sqrt(2)
-                    * (-1) ** m
-                    * np.real(
-                        m * np.cos(theta) * y_lm
-                        - (l + m)
-                        * np.sin(theta)
-                        * sph_harm_y(m, l, phi, theta + np.pi / 2)
-                    )
-                )
-            elif m < 0:
-                return (
-                    np.sqrt(2)
-                    * (-1) ** m
-                    * np.imag(
-                        m * np.cos(theta) * y_lm
-                        - (l + m)
-                        * np.sin(theta)
-                        * sph_harm_y(m, l, phi, theta + np.pi / 2)
-                    )
-                )
-            else:
-                return np.real(
-                    m * np.cos(theta) * y_lm
-                    - (l + m) * np.sin(theta) * sph_harm_y(m, l, phi, theta + np.pi / 2)
-                )
+            raw_deriv = dy_dtheta
+        else:  # gradient == "phi"
+            raw_deriv = dy_dphi
+
+        # [修复] 保持与实数球谐函数转换逻辑一致
+        if m > 0:
+            return np.sqrt(2) * (-1) ** m * np.real(raw_deriv)
+        elif m < 0:
+            return np.sqrt(2) * (-1) ** m * np.imag(raw_deriv)
         else:
-            if m > 0:
-                return np.sqrt(2) * (-1) ** m * np.real(1j * m * y_lm)
-            elif m < 0:
-                return np.sqrt(2) * (-1) ** m * np.imag(1j * m * y_lm)
-            else:
-                return 0.0
+            return np.real(raw_deriv)
 
 if __name__ == "__main__":
     # 创建 HydrogenWaveFunction 的一个实例，设置 n=2, l=1, m=0

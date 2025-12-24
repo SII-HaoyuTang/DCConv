@@ -69,7 +69,7 @@ class AssociatedLaguerrePoly:
         m: torch.Tensor = torch.arange(self.n - self.k + 1, dtype=self.dtype)
 
         # 计算 (-1)^m
-        signs: torch.Tensor = torch.where(m % 2 == 0, -1.0, 1.0)
+        signs: torch.Tensor = torch.where(m % 2 == 0, 1.0, -1.0)#[修复]连带拉盖尔多项式 与 Scipy存在一个-1的整体相位差
 
         fact1: torch.Tensor = self.n - self.k - m
         fact2: torch.Tensor = self.k + m
@@ -90,11 +90,17 @@ class AssociatedLaguerrePoly:
             dtype=self.dtype,
         )
 
-        # 合并系数
+        """ # 合并系数
         coefficients: torch.Tensor = (
             signs * (factorial_cache[self.n]) ** 2 / (denom1 * denom2 * denom3)
-        )
+        ) """
 
+        # [修复]: 系数修复，去掉平方 (**2 -> **1)
+        # 标准系数分子是 (n+k)!，即 factorial_cache[self.n]
+        coefficients: torch.Tensor = (
+            signs * (factorial_cache[self.n]) / (denom1 * denom2 * denom3)
+        )
+        
         return coefficients
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
@@ -215,6 +221,19 @@ class SphericalHarmonicFunc:
                 * math.factorial(k - m_abs)
                 / (4 * math.pi * math.factorial(k + m_abs))
             )
+            # [修复] 针对实数球谐函数的修正
+            # Scipy 定义:
+            # m > 0: sqrt(2) * (-1)^m * Re(Y)
+            # m < 0: sqrt(2) * (-1)^m * Im(Y)
+            # 
+            # Torch 实现:
+            # m > 0: 算的是 cos(m*phi). Re(Y) ~ cos. 需要 (-1)^m.
+            # m < 0: 算的是 sin(|m|*phi). Im(Y) ~ -sin. (-1)^m ~ -1.
+            #        -1 * -sin = +sin. 所以 Torch 直接算 sin 已经是正的了，不需要再乘 (-1)^m.
+            if m > 0:
+                norm = norm * math.sqrt(2) * ((-1) ** m)
+            elif m < 0:
+                norm = norm * math.sqrt(2)
             return torch.Tensor([norm])
 
         elif self.normalization == "racah":
@@ -332,7 +351,29 @@ class SphericalHarmonicFunc:
             deriv_coeffs[n - 1] = n * coeffs[n]
 
         return deriv_coeffs
+    # ================= [新增] 核心辅助方法 =================
+    def _compute_theta_part_val(self, theta: torch.Tensor) -> torch.Tensor:
+        """
+        计算 P(theta) 部分的值（包含多项式和 sin^|m| 因子）。
+        用于 Forward 和 Backward，避免代码重复和梯度奇点。
+        """
+        x: torch.Tensor = torch.cos(theta)
+        
+        # 1. 霍纳法计算多项式部分
+        coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
+        poly_val: torch.Tensor = torch.zeros_like(x)
+        for i in range(len(coeffs) - 1, -1, -1):
+            poly_val = poly_val * x + coeffs[i]
 
+        # 2. 乘以 (sinθ)^|m|
+        if self.m_abs > 0:
+            sin_theta: torch.Tensor = torch.sin(theta)
+            sin_theta = torch.clamp(sin_theta, min=0.0) # 保证非负
+            factor: torch.Tensor = torch.pow(sin_theta, self.m_abs)
+            poly_val = poly_val * factor
+            
+        return poly_val
+    
     def __call__(self, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
         """
         Evaluate the function for given theta and phi.
@@ -347,10 +388,13 @@ class SphericalHarmonicFunc:
         Returns:
             torch.Tensor: The result of the function evaluation, layout: (OutN, conv_nums)
         """
+        theta_part = self._compute_theta_part_val(theta)
+        
+        mphi = self.m_abs * phi
         if self.m >= 0:
-            return self._call_positive_m(theta, phi)
+            return theta_part * torch.cos(mphi)
         else:
-            return self._call_negative_m(theta, phi)
+            return theta_part * torch.sin(mphi)
 
     def _call_positive_m(self, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
         """
@@ -422,7 +466,8 @@ class SphericalHarmonicFunc:
         result: torch.Tensor = poly_val * azimuth
 
         return result
-
+    #[修改]为了防止如下问题：_gradient_negative_m 中的 $\phi$ 导数计算依赖 saved / sin。原因：当 $\sin(m\phi)=0$ 时，波函数值 saved 也是 0。虽然你用了 where 来防止除零，但 0/inf 变成了 0，而实际上此时导数（余弦项）是最大值，并不为 0。
+    #对backward进行了重构
     def backward(
         self, theta: torch.Tensor, phi: torch.Tensor, saved: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -446,125 +491,113 @@ class SphericalHarmonicFunc:
         --------
         (dY/dθ, dY/dφ)
         """
-        if self.m >= 0:
-            return self._gradient_positive_m(theta, phi, saved)
+        r"""
+        计算球谐函数对 $\theta$ 和 $\phi$ 的梯度（偏导数），并显式修复了极点处的梯度奇点问题。
+
+        **修改原因及梯度奇点解析：**
+        
+        1. **奇点成因 (Singularity Origin)**:
+           在先前的实现或常见的递归公式中，$\theta$ 的导数往往依赖于 $\frac{1}{\sin\theta}$ 项（例如利用 $Y_{l}^{m}$ 与 $Y_{l}^{m \pm 1}$ 的关系，或直接对含 $\sin^{|m|}\theta$ 的项求导后提取公因式）。
+           当 $\theta \to 0$ 或 $\theta \to \pi$ 时，$\sin\theta \to 0$。对于 $|m|=1$ 的情况，波函数本身 $Y \to 0$，导致导数计算出现 $\frac{0}{0}$ 的数值不稳定情况。虽然数学极限存在（且非零），但计算机浮点数运算会产生 NaN 或错误的 0 值。
+
+        2. **修复方案 (Singularity-Free Formulation)**:
+           为了彻底消除除法带来的不稳定性，本方法放弃了复用前向传播保存的 `saved` 值（因为反推需要除法），改为重新计算多项式 $P(\cos\theta)$ 及其导数 $P'(\cos\theta)$。
+           
+           我们将角向部分分解为：$\Theta(\theta) = P(\cos\theta) \cdot \sin^{|m|}\theta$
+           利用链式法则直接求导，避免任何分母项：
+           
+           $$
+           \begin{aligned}
+           \frac{\partial \Theta}{\partial \theta} &= \frac{\partial P}{\partial \theta} \sin^{|m|}\theta + P \frac{\partial (\sin^{|m|}\theta)}{\partial \theta} \\
+           &= [P'(\cos\theta) \cdot (-\sin\theta)] \cdot \sin^{|m|}\theta + P(\cos\theta) \cdot [|m|\sin^{|m|-1}\theta \cdot \cos\theta] \\
+           &= |m| P(\cos\theta) \sin^{|m|-1}\theta \cos\theta - P'(\cos\theta) \sin^{|m|+1}\theta
+           \end{aligned}
+           $$
+
+        **不同 |m| 情况下的表现：**
+        - **|m| = 0**: 第一项消失，结果为 $-P'\sin\theta$。（在 $\theta=0$ 处为 0，稳定）
+        - **|m| = 1**: 第一项变为 $P \cos\theta$。（在 $\theta=0$ 处为 $P(1) \neq 0$，稳定且正确）
+        - **|m| > 1**: 两项均含 $\sin\theta$ 因子。（在 $\theta=0$ 处为 0，稳定）
+
+        **关于 $\phi$ 的梯度：**
+        直接利用计算出的 $\Theta(\theta)$ 值乘以 $\phi$ 部分的导数，同样避免了 $\frac{saved}{\sin(m\phi)}$ 的除法奇点。
+        - $m \ge 0$: $\frac{\partial Y}{\partial \phi} = \Theta(\theta) \cdot [-m \sin(m\phi)]$
+        - $m < 0$: $\frac{\partial Y}{\partial \phi} = \Theta(\theta) \cdot [|m| \cos(|m|\phi)]$
+
+        Returns:
+        --------
+        (dY/dθ, dY/dφ) : Tuple[torch.Tensor, torch.Tensor]
+            形状与输入 theta/phi 相同的梯度张量。
+        """
+        x: torch.Tensor = torch.cos(theta)
+        sin_theta: torch.Tensor = torch.sin(theta)
+        mphi: torch.Tensor = self.m_abs * phi
+
+        # 重新计算多项式的值 P(cosθ)
+        # 我们需要原始多项式值（不含 sin^m 因子）来计算导数项
+        coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
+        poly_val: torch.Tensor = torch.zeros_like(x)
+        for i in range(len(coeffs) - 1, -1, -1):
+            poly_val = poly_val * x + coeffs[i]
+
+        # 计算多项式导数值 P'(cosθ)
+        deriv_coeffs: torch.Tensor = self.horner_coeffs_derivative.to(theta.device)
+        poly_deriv_val: torch.Tensor = torch.zeros_like(x)
+        if len(deriv_coeffs) > 0:
+            for i in range(len(deriv_coeffs) - 1, -1, -1):
+                poly_deriv_val = poly_deriv_val * x + deriv_coeffs[i]
+
+        # 计算 Theta 部分的值 (Theta) 和 Theta 对 theta 的导数 (dTheta_dtheta)
+        # Theta = P * sin^|m|
+        # dTheta/dtheta = |m| * P * sin^|m|-1 * cos - P' * sin^|m|+1
+        
+        theta_part_val: torch.Tensor
+        dTheta_dtheta: torch.Tensor
+
+        if self.m_abs == 0:
+            # m=0: Theta = P
+            # dTheta = P' * (-sin)
+            theta_part_val = poly_val
+            dTheta_dtheta = -poly_deriv_val * sin_theta
+        
+        elif self.m_abs == 1:
+            # m=1: Theta = P * sin
+            # dTheta = P * cos - P' * sin^2 (此项在 theta=0 时非零)
+            theta_part_val = poly_val * sin_theta
+            dTheta_dtheta = poly_val * x - poly_deriv_val * (sin_theta ** 2)
+            
         else:
-            return self._gradient_negative_m(theta, phi, saved)
+            # m > 1
+            sin_m_minus_1 = torch.pow(sin_theta, self.m_abs - 1)
+            sin_m = sin_m_minus_1 * sin_theta
+            
+            theta_part_val = poly_val * sin_m
+            
+            # term1 = |m| * P * sin^|m|-1 * cos
+            term1 = self.m_abs * poly_val * sin_m_minus_1 * x
+            
+            # term2 = P' * sin^|m|+1
+            term2 = poly_deriv_val * (sin_m * sin_theta)
+            
+            dTheta_dtheta = term1 - term2
 
-    def _gradient_positive_m(
-        self, theta: torch.Tensor, phi: torch.Tensor, saved: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Calculates the gradient of a function with respect to theta and phi for positive m values.
-        The function computes derivatives using saved values, trigonometric functions, and polynomial coefficients.
-        It handles special cases where sin(theta) or cos(m*phi) is close to zero to avoid numerical instability.
+        dY_dtheta: torch.Tensor
+        dY_dphi: torch.Tensor
 
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: A tuple containing the derivative of the function with respect to theta and phi.
+        if self.m >= 0:
+            # m >= 0: Y = Theta * cos(m*phi)
+            cos_mphi = torch.cos(mphi)
+            sin_mphi = torch.sin(mphi)
 
-        Raises:
-            None
+            dY_dtheta = dTheta_dtheta * cos_mphi
+            dY_dphi = theta_part_val * (-self.m_abs * sin_mphi)
+        else:
+            # m < 0: Y = Theta * sin(|m|*phi)
+            sin_mphi = torch.sin(mphi)
+            cos_mphi = torch.cos(mphi)
 
-        Args:
-            theta (torch.Tensor): The theta angles.
-            phi (torch.Tensor): The phi angles.
-            saved (torch.Tensor): Precomputed values used in the derivative calculation.
-        """
-        # 计算 x = cosθ 和 sinθ
-        x: torch.Tensor = torch.cos(theta)
-        sin_theta: torch.Tensor = torch.sin(theta)
-        # 处理sin(\theta)=0的情况，在这种情况下正向计算的值本身为零，故导数为0
-        sin_theta_judge: torch.Tensor = torch.where(
-            sin_theta < 10e-4, torch.inf, sin_theta
-        )
-        mphi: torch.Tensor = self.m_abs * phi
-        sin_mphi: torch.Tensor = torch.sin(mphi)
-        cos_mphi: torch.Tensor = torch.cos(mphi)
-        # 同上
-        cos_mphi_judge: torch.Tensor = torch.where(
-            torch.logical_and(-10e-5 < cos_mphi, cos_mphi < 10e-5), torch.inf, cos_mphi
-        )
-
-        # 提取多项式部分导数
-        deriv_coeffs: torch.Tensor = self.horner_coeffs_derivative.to(theta.device)
-
-        # 计算多项式导数值Poly'
-        poly_deriv_val: torch.Tensor = torch.zeros_like(x)
-        if len(deriv_coeffs) > 0:
-            for i in range(len(deriv_coeffs) - 1, -1, -1):
-                poly_deriv_val = poly_deriv_val * x + deriv_coeffs[i]
-
-        # \frac{1}{\sin\theta} (|m| Saved - N \cos(m\phi) sin^{|m|+2}\theta Poly')
-        dY_dtheta: torch.Tensor = (
-            self.m_abs * saved
-            - self.normalization_parameters
-            * cos_mphi
-            * sin_theta ** (self.m_abs + 2)
-            * poly_deriv_val
-        ) / sin_theta_judge
-
-        # dY/dφ = - \frac{saved}{\cos(m\phi)}\sin(m\phi)
-        dY_dphi: torch.Tensor = -saved * sin_mphi / cos_mphi_judge
-
-        return dY_dtheta, dY_dphi
-
-    def _gradient_negative_m(
-        self, theta: torch.Tensor, phi: torch.Tensor, saved: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Calculates the gradient of a function with respect to theta and phi for negative m values.
-
-        Summary:
-        This function computes the partial derivatives of a given function with respect to theta and phi, specifically tailored for cases where m (a parameter) is negative. It handles special cases where sin(theta) or sin(m*phi) are close to zero to avoid numerical instability.
-
-        Args:
-            theta: A tensor representing the theta values.
-            phi: A tensor representing the phi values.
-            saved: A tensor containing precomputed values used in the derivative calculation.
-
-        Returns:
-            A tuple of two tensors: (dY_dtheta, dY_dphi)
-            - dY_dtheta: The derivative of the function with respect to theta.
-            - dY_dphi: The derivative of the function with respect to phi.
-
-        Raises:
-            No specific exceptions are raised within this method. However, it relies on PyTorch operations which may raise exceptions under certain conditions, such as if the input tensors are not on the same device or have incompatible shapes.
-        """
-        # 计算 x = cosθ 和 sinθ
-        x: torch.Tensor = torch.cos(theta)
-        sin_theta: torch.Tensor = torch.sin(theta)
-        # 处理sin(\theta)=0的情况，在这种情况下正向计算的值本身为零，故导数为0  # noqa: F821
-        sin_theta_judge: torch.Tensor = torch.where(
-            sin_theta < 10e-4, torch.inf, sin_theta
-        )
-        mphi: torch.Tensor = self.m_abs * phi
-        cos_mphi: torch.Tensor = torch.sin(mphi)
-        sin_mphi: torch.Tensor = torch.cos(mphi)
-        # 同上
-        sin_mphi_judge: torch.Tensor = torch.where(
-            torch.logical_and(-10e-5 < sin_mphi, sin_mphi < 10e-5), torch.inf, sin_mphi
-        )
-
-        # 提取多项式部分导数
-        deriv_coeffs: torch.Tensor = self.horner_coeffs_derivative.to(theta.device)
-
-        # 计算多项式导数值Poly'
-        poly_deriv_val: torch.Tensor = torch.zeros_like(x)
-        if len(deriv_coeffs) > 0:
-            for i in range(len(deriv_coeffs) - 1, -1, -1):
-                poly_deriv_val = poly_deriv_val * x + deriv_coeffs[i]
-
-        # \frac{1}{\sin\theta} (|m| Saved - N \sin(m\phi) sin^{|m|+2}\theta Poly')
-        dY_dtheta: torch.Tensor = (
-            self.m_abs * saved
-            - self.normalization_parameters
-            * sin_mphi
-            * sin_theta ** (self.m_abs + 2)
-            * poly_deriv_val
-        ) / sin_theta_judge
-
-        # dY/dφ = \frac{saved}{\cos(m\phi)}\sin(m\phi)
-        dY_dphi: torch.Tensor = saved * cos_mphi / sin_mphi_judge
+            dY_dtheta = dTheta_dtheta * sin_mphi
+            dY_dphi = theta_part_val * (self.m_abs * cos_mphi)
 
         return dY_dtheta, dY_dphi
 
@@ -879,9 +912,10 @@ class HydrogenWaveFunc:
         self.associated_laguerre_derivative: Callable = assoc_laguerre_series(
             n + k, 2 * k + 2
         )
-
+        
+        prefactor = (2.0 / n)**3#[修复]增加归一化系数
         self.radial_normalization_factor: torch.Tensor = torch.Tensor(
-            [np.sqrt(math.factorial(n - k - 1) / (2.0 * n * math.factorial(n + k)))]
+            [np.sqrt(prefactor * math.factorial(n - k - 1) / (2.0 * n * math.factorial(n + k)))]
         )
 
     def forward(
@@ -912,17 +946,23 @@ class HydrogenWaveFunc:
         theta: torch.Tensor = position[:, :, 1]
         phi: torch.Tensor = position[:, :, 2]
         # 计算径向部分
-        laguerre_value: torch.Tensor = self.associated_laguerre(r)
+        #laguerre_value: torch.Tensor = self.associated_laguerre(r)
 
+        # [修复]定义无量纲半径 rho = 2r/n
+        # 所有的拉盖尔多项式和指数项都应该基于 rho，而不是 r
+        rho = 2.0 * r / self.n
+        laguerre_value: torch.Tensor = self.associated_laguerre(rho)
+        
         radial_part: torch.Tensor = (
-            torch.exp(-r / 2)
-            * (r**self.k)
+            torch.exp(-rho / 2)
+            * (rho**self.k)
             * self.radial_normalization_factor
             * laguerre_value
         )
 
         # 计算角向部分
-        angular_part: torch.Tensor = self.spherical_harmonic(phi, theta)
+        # [修复]: 交换 theta 和 phi，正确顺序应为 (theta, phi)
+        angular_part: torch.Tensor = self.spherical_harmonic(theta, phi)
 
         # 结合两部分得到波函数
         psi: torch.Tensor = radial_part * angular_part
@@ -967,13 +1007,41 @@ class HydrogenWaveFunc:
         position, radial_part, laguerre_value, angular_part = saved_data
 
         r, theta, phi = position[:, :, 0], position[:, :, 1], position[:, :, 2]
-
+        
+        
         # 径向部分  \frac{\partial \exp^{-r/2}*r^l*L}{\partial r} = l*\exp^{-r/2}*r^{l-1}*L - 0.5 * \exp^{-r/2}*r^l*L + \exp^{-r/2}*r^l*L'
         # 将上式中可以被提出的前向部分提出，就得到了实际使用的表达式
-        dradial_dr: torch.Tensor = radial_part * (
+        """ dradial_dr: torch.Tensor = radial_part * (
             self.k / r - 0.5 + self.associated_laguerre_derivative(r) / laguerre_value
+        ) """
+        
+        rho = 2.0 * r / self.n
+        # 计算 "幅值部分" A (即不含拉盖尔多项式的部分)
+        # A = N * exp(-rho/2) * rho^l
+        # 我们可以安全地重新计算它
+        amplitude_part = (
+            self.radial_normalization_factor 
+            * torch.exp(-rho / 2) 
+            * (rho ** self.k)
         )
 
+        # 第一项: A' * L
+        # dA/dr = A * (-1/n + l/r)
+        # term1 = (dA/dr) * L = radial_part * (-1/n + l/r)
+        r_safe = torch.where(r < 1e-8, torch.tensor(1.0, device=r.device), r)
+        l_over_r = torch.where(r < 1e-8, torch.tensor(0.0, device=r.device), self.k / r_safe)
+        
+        grad_from_amplitude = radial_part * (-1.0 / self.n + l_over_r)
+
+        # 第二项: A * L'
+        # L' = dL/dr = dL/drho * drho/dr
+        # dL/drho = -associated_laguerre_derivative 
+        # drho/dr = 2/n
+        dl_dr = -(2.0 / self.n) * self.associated_laguerre_derivative(rho)
+        grad_from_laguerre = amplitude_part * dl_dr
+        dradial_dr = grad_from_amplitude + grad_from_laguerre
+        
+        
         # 角向部分
         dangular_dtheta, dangular_dphi = self.spherical_harmonic.backward(
             theta, phi, angular_part
@@ -1040,19 +1108,21 @@ class HydrogenWaveFuncsSeries:
 
     def _update_hydrogen_wave_funcs(self) -> None:
         for n in range(self.max_n):
+            n_quant = n + 1  # [修复] 主量子数从 1 开始
             for k in range(self.max_k + 1):
                 for m in range(-self.max_m, self.max_m + 1):
-                    if self.check(n, k, m):
+                    # [新增] 物理约束过滤：跳过不合法的量子数，防止后续报错
+                    if not (abs(m) <= k and k < n_quant):
+                        continue
+                    if self.check(n_quant, k, m):
                         continue
                     else:
-                        func: Callable = HydrogenWaveFunc(n + 1, k, m, self.dtype)
-                        self.hydrogen_wave_funcs_series[(n + 1, k, m)] = func
+                        func: Callable = HydrogenWaveFunc(n_quant, k, m, self.dtype)
+                        self.hydrogen_wave_funcs_series[(n_quant, k, m)] = func
 
     def check(self, n: int, k: int, m: int) -> bool:
-        if not self.hydrogen_wave_funcs_series[(n, k, m)]:
-            return False
-        else:
-            return True
+        #[修复] 安全地检查键是否存在，避免 KeyError
+        return (n, k, m) in self.hydrogen_wave_funcs_series
 
     def extend(self, dest_n: int, dest_k: int, dest_m: int) -> None:
         self.max_n = max(dest_n, self.max_n)

@@ -235,6 +235,9 @@ def test_gradient_flow():
 
     except Exception as e:
         print(f"❌ Gradient test failed with error: {e}")
+        import traceback
+
+        traceback.print_exc()
         return False
 
 

@@ -6,6 +6,14 @@ import numpy as np
 import torch
 
 
+@torch.compile  # 使用编译消除 Python 循环开销
+def poly_eval(x, coeffs):
+    # coeffs 顺序: [an, ..., a1, a0]
+    result = torch.zeros_like(x)
+    for c in coeffs:
+        result = result * x + c
+    return result
+
 class AssociatedLaguerrePoly:
     r"""
     适用于氢原子与导数计算的高效连带拉盖尔多项式实现。
@@ -97,6 +105,9 @@ class AssociatedLaguerrePoly:
 
         return coefficients
 
+
+
+
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
         Computes the value of a polynomial at given points using Horner's method.
@@ -129,9 +140,7 @@ class AssociatedLaguerrePoly:
         # 使用霍纳法（Horner's method）计算多项式
         # 对于多项式 a_n*x^n + ... + a_1*x + a_0
         # 从最高次项开始计算
-        result: torch.Tensor = torch.zeros_like(x)
-        for i in range(self.n - self.k, -1, -1):
-            result: torch.Tensor = result * x + coeffs[i]
+        result = poly_eval(x, coeffs)
 
         return result
 

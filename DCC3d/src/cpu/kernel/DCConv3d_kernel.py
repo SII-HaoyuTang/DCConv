@@ -6,121 +6,93 @@ import torch.nn as nn
 from .polynomials_torch import HWFR
 
 
-class DCConv3dKernelUnitPolynomials(nn.Module):
-    """
-    A neural network layer that uses different hydrogen atom wave functions as basis functions.
-    The network parameters are the coefficients in front of each basis function.
-
-    :param N: Maximum principal quantum number (n)
-    :param K: Maximum azimuthal quantum number (k)
-    :param M: Maximum magnetic quantum number (m)
-    """
-
-    def __init__(self, N: int, K: int, M: int):
-        """
-        Initializes the DCConv3d layer.
-
-        :param N: Maximum principal quantum number (n)
-        :param K: Maximum azimuthal quantum number (k)
-        :param M: Maximum magnetic quantum number (m)
-        """
-        super(DCConv3dKernelUnitPolynomials, self).__init__()
-        self.N: int = N
-        self.K: int = K
-        self.M: int = M
-        self.polynomials: List[torch.autograd.Function] = []
-        self._Polynomial_initial()
-
-        # Initialize the coefficients for each polynomial as trainable parameters
-        self.coefficients: torch.nn.ParameterList = nn.ParameterList(
-            [nn.Parameter(torch.randn(1)) for _ in range(len(self.polynomials))]
-        )
-
-    def _Polynomial_initial(self):
-        """
-        Initializes the polynomial list with HWFR instances based on the specified ranges for n, k, and m.
-        """
-
-        for n in range(1, self.N + 1):  # n should start from 1
-            for k in range(
-                0, min(n, self.K + 1)
-            ):  # l should be less than or equal to n and L
-                for m in range(-k, k + 1):  # m should be between -l and l
-                    if abs(m) <= self.M:
-                        self.polynomials.append(HWFR(n, k, m))
-
-    def forward(self, position: torch.Tensor) -> torch.Tensor:
-        """
-        Computes the output of the DCConv3d layer.
-
-        :param position: Position tensor containing r, theta, phi in shape (OutN, conv_nums, 3), where
-            OutN is the number of output grids, conv_nums is the number of convolution grids, and 3 represents
-            the coordinates (r, theta, phi).
-        :return: The output tensor of shape (OutN, conv_nums)
-        """
-        # TODO: Implement the function parallel
-        output: torch.Tensor = torch.stack(
-            [
-                polynomial.apply(position) * coeffs
-                for polynomial, coeffs in zip(self.polynomials, self.coefficients)
-            ],
-            dim=0,
-        ).sum(dim=0)  # 多项式的每一项相加在一起
-
-        return output
-
-
 class DCConv3dKernelPolynomials(nn.Module):
     """
-    A neural network layer that combines multiple DCConv3dKernelUnitPolynomials layers to form a 3D convolutional kernel.
+    Evaluates a set of 3D polynomials at given positions and applies coefficients to the result, designed for use in
+    deep learning models.
 
-    :param OutC: Number of output channels
-    :param InC: Number of input channels
-    :param N: Maximum principal quantum number (n)
-    :param L: Maximum azimuthal quantum number (l)
-    :param M: Maximum magnetic quantum number (m)
+    This class is used to compute the value of a series of 3D polynomials at specified positions.
+     The polynomials are defined by their order (N), degree (K), and range (M). The evaluation takes into account the
+     constraints on the polynomial parameters and then multiplies the evaluated polynomial values with predefined
+     coefficients using Einstein summation. The output is a tensor that can be used in further computations within a
+     neural network.
     """
 
-    def __init__(self, OutC: int, InC: int, N: int, L: int, M: int):
-        """
-        Initializes the DCConv3dKernelPolynomials layer.
+    def __init__(self, OutC: int, InC: int, N: int, K: int, M: int):
+        """ """
+        if not (isinstance(N, int) and N > 0):
+            raise ValueError("n must be a positive integer")
+        if not (isinstance(K, int) and 0 <= K < N):
+            raise ValueError("l must be an integer between 0 and n-1")
+        if not (isinstance(M, int) and -K <= M <= K):
+            raise ValueError("m must be an integer between -l and l")
 
-        :param OutC: Number of output channels
-        :param InC: Number of input channels
-        :param N: Maximum principal quantum number (n)
-        :param L: Maximum azimuthal quantum number (l)
-        :param M: Maximum magnetic quantum number (m)
-        """
         super(DCConv3dKernelPolynomials, self).__init__()
         self.OutC: int = OutC
         self.InC: int = InC
         self.N: int = N
-        self.L: int = L
+        self.K: int = K
         self.M: int = M
+        self.total_polynomial_nums = N * (K + 1) * min(2 * K + 1, M)
 
-        # Create a list of DCConv3dKernelUnitPolynomials layers
-        self.kernel_unit_list: nn.ModuleList = nn.ModuleList(
-            [DCConv3dKernelUnitPolynomials(N, L, M) for _ in range(OutC * InC)]
+        # Create the coefficients with tensor of (OutC, InC, polynomial_nums)
+        self.coefficients: torch.nn.Parameter = torch.nn.Parameter(
+            torch.randn((OutC, InC, self.total_polynomial_nums))
         )
 
     def forward(self, position: torch.Tensor) -> torch.Tensor:
         """
-        Computes the output of the DCConv3dKernelPolynomials layer.
+        Computes the value of a set of polynomials at given positions and applies coefficients to the result.
 
-        :param position: Position tensor containing r, theta, phi in shape (OutN, n, 3), where
-            OutN is the number of output grids, n is the number of convolution grids, and 3 represents
-            the coordinates (r, theta, phi).
-        :return: The output tensor of shape (OutC, InC, OutN, n)
+        Summary:
+        This method evaluates a series of polynomials at specified positions, taking into account
+        the constraints on the polynomial parameters (n, k, m). It then multiplies the evaluated
+        polynomial values with predefined coefficients using Einstein summation to produce the final output.
+        The method is designed to work with tensors, allowing for batch processing of the input positions.
+
+        Parameters:
+            position: torch.Tensor
+                The tensor containing the positions at which to evaluate the polynomials.
+
+        Returns:
+            torch.Tensor
+                The tensor containing the computed values after applying the polynomial evaluation and
+                coefficient multiplication.
+
+        Raises:
+            ValueError
+                If the input `position` does not have the expected shape or type.
         """
-        OutN, n, _ = position.shape
-        output = torch.zeros((self.OutC, self.InC, OutN, n), dtype=position.dtype)
+        # Compute the value of the polynomials with given positions.
+        n_values = torch.arange(1, self.N + 1)
+        k_values = torch.arange(self.K)
+        m_values = torch.arange(-self.M, self.M + 1)
 
-        # TODO: Implement the function parallel
-        # Loop over the output channels
-        for i in range(self.OutC):
-            # Loop over the input channels
-            for j in range(self.InC):
-                # Compute the output for each channel combination
-                output[i, j] = self.kernel_unit_list[i * self.InC + j](position)
+        # Generate all valid (n, k, m) combinations
+        valid_combinations: List = [
+            (n, k, m)
+            for n in n_values
+            for k in k_values
+            for m in m_values
+            if abs(m) <= k and k < n
+        ]
+
+        # Convert to tensors
+        n_tensor = torch.tensor([n for n, _, _ in valid_combinations], dtype=torch.long)
+        k_tensor = torch.tensor([k for _, k, _ in valid_combinations], dtype=torch.long)
+        m_tensor = torch.tensor([m for _, _, m in valid_combinations], dtype=torch.long)
+
+        # Apply HWFR in a batch
+        poly_values: torch.Tensor = torch.stack(
+            [
+                HWFR(n.item(), k.item(), m.item()).apply(position)
+                for n, k, m in zip(n_tensor, k_tensor, m_tensor)
+            ],
+            dim=2,
+        )
+
+        # poly_values matrix element-times coefficients with einstein sum from (OutN, conv_nums, total_polynomial_nums)
+        # and (OutC, InC, total_polynomial_nums) to (OutC, InC, OutN, conv_nums)
+        output = torch.einsum("ijk, mnk -> mnij", poly_values, self.coefficients)
 
         return output

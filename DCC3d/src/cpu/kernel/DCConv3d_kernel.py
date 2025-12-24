@@ -33,7 +33,34 @@ class DCConv3dKernelPolynomials(nn.Module):
         self.N: int = N
         self.K: int = K
         self.M: int = M
-        self.total_polynomial_nums = N * (K + 1) * min(2 * K + 1, M)
+
+        # Compute the value of the polynomials with given positions.
+        n_values = torch.arange(1, self.N + 1)
+        k_values = torch.arange(self.K + 1)
+        m_values = torch.arange(-self.M, self.M + 1)
+
+        # Generate all valid (n, k, m) combinations
+        valid_combinations: List = [
+            (n, k, m)
+            for n in n_values
+            for k in k_values
+            for m in m_values
+            if abs(m) <= k and k < n
+        ]
+
+        # Convert to tensors
+        self.n_tensor = torch.tensor(
+            [n for n, _, _ in valid_combinations], dtype=torch.long
+        )
+        self.k_tensor = torch.tensor(
+            [k for _, k, _ in valid_combinations], dtype=torch.long
+        )
+        self.m_tensor = torch.tensor(
+            [m for _, _, m in valid_combinations], dtype=torch.long
+        )
+
+        # self.total_polynomial_nums = N * (K + 1) * min(2 * K + 1, 2 * M + 1)
+        self.total_polynomial_nums = len(self.n_tensor)
 
         # Create the coefficients with tensor of (OutC, InC, polynomial_nums)
         self.coefficients: torch.nn.Parameter = torch.nn.Parameter(
@@ -63,30 +90,12 @@ class DCConv3dKernelPolynomials(nn.Module):
             ValueError
                 If the input `position` does not have the expected shape or type.
         """
-        # Compute the value of the polynomials with given positions.
-        n_values = torch.arange(1, self.N + 1)
-        k_values = torch.arange(self.K)
-        m_values = torch.arange(-self.M, self.M + 1)
-
-        # Generate all valid (n, k, m) combinations
-        valid_combinations: List = [
-            (n, k, m)
-            for n in n_values
-            for k in k_values
-            for m in m_values
-            if abs(m) <= k and k < n
-        ]
-
-        # Convert to tensors
-        n_tensor = torch.tensor([n for n, _, _ in valid_combinations], dtype=torch.long)
-        k_tensor = torch.tensor([k for _, k, _ in valid_combinations], dtype=torch.long)
-        m_tensor = torch.tensor([m for _, _, m in valid_combinations], dtype=torch.long)
 
         # Apply HWFR in a batch
         poly_values: torch.Tensor = torch.stack(
             [
                 HWFR(n.item(), k.item(), m.item()).apply(position)
-                for n, k, m in zip(n_tensor, k_tensor, m_tensor)
+                for n, k, m in zip(self.n_tensor, self.k_tensor, self.m_tensor)
             ],
             dim=2,
         )

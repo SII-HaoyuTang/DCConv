@@ -198,6 +198,7 @@ class HydrogenWaveFunction:
             else:
                 return 0.0
 
+
 if __name__ == "__main__":
     # 创建 HydrogenWaveFunction 的一个实例，设置 n=2, l=1, m=0
     wave_function = HydrogenWaveFunction(n=2, l=1, m=0)

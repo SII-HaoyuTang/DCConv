@@ -14,6 +14,7 @@ def poly_eval(x, coeffs):
         result = result * x + c
     return result
 
+
 class AssociatedLaguerrePoly:
     r"""
     适用于氢原子与导数计算的高效连带拉盖尔多项式实现。
@@ -104,9 +105,6 @@ class AssociatedLaguerrePoly:
         )
 
         return coefficients
-
-
-
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """

@@ -348,7 +348,7 @@ def test_minimal_case():
     n_points = 20
     in_channels = 2
     out_channels = 4
-    N, L, M = 1, 1, 1
+    N, L, M = 2, 1, 1
 
     positions, features = generate_test_point_cloud(n_points, in_channels, seed=999)
 
@@ -375,6 +375,9 @@ def test_minimal_case():
 
     except Exception as e:
         print(f"❌ Minimal case failed with error: {e}")
+        import traceback
+
+        traceback.print_exc()
         return False
 
 

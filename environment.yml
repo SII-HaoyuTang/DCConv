@@ -6,4 +6,6 @@ dependencies:
   - numpy
   - scipy
   - torch
+  - tqdm
+  - pandas
 prefix: /Users/sii-haoyutang/miniconda3/envs/DCC3d

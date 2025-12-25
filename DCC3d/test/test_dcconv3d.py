@@ -514,6 +514,7 @@ def run_all_tests():
         test_pca_vs_no_pca,
         test_structured_data,
         test_minimal_case,
+        test_n_select_variations,
     ]
 
     results = []

@@ -8,6 +8,19 @@ from .transformation import CoordinateTransformer
 
 
 class DistanceContainedConv3d(nn.Module):
+    """
+    A 3D convolutional layer that incorporates distance information for feature transformation and aggregation.
+    The layer processes input tensors through a series of steps including neighbor selection, coordinate transformation,
+    kernel weight generation, and feature aggregation. The output is a tensor that combines the transformed features
+    with the centers of the original positions.
+
+    Detailed description:
+    This class implements a 3D convolutional layer designed to handle spatial data with an emphasis on maintaining
+    distance information between points. It utilizes a coordinate transformer, a selector for neighbor points,
+    a kernel for generating dynamic weights based on spherical coordinates, and an aggregation layer to combine
+    features. The primary goal is to enhance the representation of spatial relationships in the input data,
+    making it suitable for tasks that require understanding of geometric structures.
+    """
     def __init__(
         self,
         in_channels: int,
@@ -25,21 +38,25 @@ class DistanceContainedConv3d(nn.Module):
         self.aggregation = AggregationLayer()
 
     def forward(
-        self, position_matrix: torch.Tensor, channel_matrix: torch.Tensor
-    ) -> torch.Tensor:
+        self, position_matrix: torch.Tensor, channel_matrix: torch.Tensor, indices: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        前向传播 (Forward Pass)
+        Forward pass of the network.
 
-        Args:
-            position_matrix (torch.Tensor): 点云坐标矩阵
-                Shape: (N, 3), 其中 N 是点的数量，3 代表 (x, y, z)
-            channel_matrix (torch.Tensor): 点的属性特征矩阵
-                Shape: (N, Ci), 其中 Ci 是输入通道数
+        Summary:
+        This function performs a forward pass through the network, executing several steps including
+        neighbor selection, coordinate transformation, kernel weight generation, and feature aggregation.
+        The input consists of a position matrix and a channel matrix, and the output is a tuple containing
+        the centers and the final output tensor after processing.
+
+        Parameters:
+        - position_matrix (torch.Tensor): The input position matrix for the points.
+        - channel_matrix (torch.Tensor): The input channel matrix for the features.
 
         Returns:
-            output (torch.Tensor): 卷积后的特征
-                Shape: (Co, N), 其中 Co 是输出通道数
+        - tuple[torch.Tensor, torch.Tensor]: A tuple containing the centers and the processed output tensor.
         """
+
         # Step 1: 邻居选择 (Neighbor Selection)
         # 使用选择器为每个点选择邻居
         neighbor_indices = self.selector(position_matrix)  # Shape: (N, k)
@@ -70,4 +87,4 @@ class DistanceContainedConv3d(nn.Module):
         )  # Shape: (Co, N)
         output = output.permute(1, 0)  # (N, Co)
 
-        return output
+        return centers, output,

@@ -16,6 +16,7 @@ class Dcconv3dBatchnorm(nn.Module):
     :returns: Normalized tensor after applying 1D batch normalization.
     :rtype: torch.Tensor
     """
+
     def __init__(self, num_features):
         super(Dcconv3dBatchnorm, self).__init__()
         self.batchnorm1d = nn.BatchNorm1d(num_features=num_features)

@@ -18,8 +18,8 @@
 4. 笛卡尔坐标转球极坐标 - 可微分！
 """
 
-from typing import Optional, Tuple
 import sys
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -31,7 +31,7 @@ except ImportError:
     from rotation_invariance import RotationInvarianceTorch
 
 # 检测 torch.compile 可用性（PyTorch 2.0+）
-TORCH_COMPILE_AVAILABLE = hasattr(torch, 'compile') and sys.version_info >= (3, 8)
+TORCH_COMPILE_AVAILABLE = hasattr(torch, "compile") and sys.version_info >= (3, 8)
 
 
 class CoordinateTransformerTorch(nn.Module):
@@ -75,13 +75,15 @@ class CoordinateTransformerTorch(nn.Module):
 
         if center_method == "median":
             print("警告: median 不可微分，将在需要梯度时使用 mean")
-        
+
         if self.use_compile and not TORCH_COMPILE_AVAILABLE:
-            print(f"警告: torch.compile 不可用 (PyTorch {torch.__version__})，回退到普通模式")
+            print(
+                f"警告: torch.compile 不可用 (PyTorch {torch.__version__})，回退到普通模式"
+            )
             self.use_compile = False
 
         self.rotation_invariance = RotationInvarianceTorch(stabilize=pca_stabilize)
-        
+
         # 编译核心计算函数以加速
         if self.use_compile:
             self._apply_pca_batch = torch.compile(self._apply_pca_batch_impl)
@@ -149,6 +151,8 @@ class CoordinateTransformerTorch(nn.Module):
             则返回 (N_centers, K, 118)，即每个中心点的邻居的原子类型特征
         """
         # 通过索引提取局部特征（可微分）
+        print(f"neighbor_indices shape: {neighbor_indices.shape}")
+        print(f"global_features shape: {global_features.shape}")
         local_features = global_features[neighbor_indices]  # (N_centers, K, Ci)
 
         return local_features
@@ -235,13 +239,13 @@ class CoordinateTransformerTorch(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         批量 PCA 对齐的核心实现（供 torch.compile 编译）
-        
+
         这个函数会被 torch.compile 编译成优化的融合核
-        
+
         Args:
             relative_coords: (N_centers, K, 3)
             epsilon: 数值稳定化参数
-            
+
         Returns:
             aligned_coords: (N_centers, K, 3)
             eigenvalues: (N_centers, 3)
@@ -249,24 +253,21 @@ class CoordinateTransformerTorch(nn.Module):
         K = relative_coords.shape[1]
         device = relative_coords.device
         dtype = relative_coords.dtype
-        
+
         # 1. 批量计算协方差矩阵
-        cov_matrices = torch.bmm(
-            relative_coords.transpose(1, 2),
-            relative_coords
-        ) / K
-        
+        cov_matrices = torch.bmm(relative_coords.transpose(1, 2), relative_coords) / K
+
         # 2. 数值稳定化
         cov_matrices = cov_matrices + epsilon * torch.eye(
             3, device=device, dtype=dtype
         ).unsqueeze(0)
-        
+
         # 3. 批量特征值分解
         eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrices)
-        
+
         # 4. 批量投影
         aligned_coords = torch.bmm(relative_coords, eigenvectors)
-        
+
         return aligned_coords, eigenvalues
 
     def apply_rotation_invariance(
@@ -306,12 +307,10 @@ class CoordinateTransformerTorch(nn.Module):
             return aligned_coords, eigenvalues
 
         # ========== 向量化实现：批量 PCA 对齐 ==========
-        
+
         # 调用编译后的批量 PCA 函数
         epsilon = float(self.rotation_invariance.epsilon)
-        aligned_coords, eigenvalues = self._apply_pca_batch(
-            relative_coords, epsilon
-        )
+        aligned_coords, eigenvalues = self._apply_pca_batch(relative_coords, epsilon)
 
         return aligned_coords, eigenvalues
 

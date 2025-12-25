@@ -100,16 +100,32 @@ def test_forward_pass_basic():
         use_PCA=True,
     )
 
-    # Forward pass
+    # Forward pass - test with different n_select values
     try:
-        output = model(positions, features)
+        # Test 1: No n_select (use all points)
+        centers, output = model(positions, features)
         expected_shape = (n_points, out_channels)
+        expected_centers_shape = (n_points, 3)
 
-        if output.shape == expected_shape:
-            print(f"✅ Forward pass successful: {output.shape}")
+        if output.shape == expected_shape and centers.shape == expected_centers_shape:
+            print(f"✅ Forward pass (all points): output {output.shape}, centers {centers.shape}")
+        else:
+            print(f"❌ Shape mismatch (all points): Got output {output.shape}, centers {centers.shape}")
+            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
+            return False
+
+        # Test 2: With n_select
+        n_select = 30
+        centers, output = model(positions, features, n_select=n_select)
+        expected_shape = (n_select, out_channels)
+        expected_centers_shape = (n_select, 3)
+
+        if output.shape == expected_shape and centers.shape == expected_centers_shape:
+            print(f"✅ Forward pass (n_select={n_select}): output {output.shape}, centers {centers.shape}")
             return True
         else:
-            print(f"❌ Shape mismatch: Got {output.shape}, Expected {expected_shape}")
+            print(f"❌ Shape mismatch (n_select={n_select}): Got output {output.shape}, centers {centers.shape}")
+            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
             return False
 
     except Exception as e:
@@ -126,8 +142,8 @@ def test_different_input_sizes():
 
     test_sizes = [
         (20, 4, 8),  # Small
-        # (100, 16, 32),  # Medium
-        # (200, 8, 16),  # Large
+        (40, 6, 12),  # Medium
+        # (200, 8, 16),  # Large - commented out for faster testing
     ]
 
     N, L, M = 2, 1, 1
@@ -150,17 +166,37 @@ def test_different_input_sizes():
         )
 
         try:
-            output = model(positions, features)
+            # Test with all points
+            centers, output = model(positions, features)
             expected_shape = (n_points, out_channels)
+            expected_centers_shape = (n_points, 3)
 
-            if output.shape == expected_shape:
+            if output.shape == expected_shape and centers.shape == expected_centers_shape:
                 print(
-                    f"  ✅ Size {n_points}x{in_channels}->{out_channels}: {output.shape}"
+                    f"  ✅ Size {n_points}x{in_channels}->{out_channels}: output {output.shape}, centers {centers.shape}"
                 )
             else:
                 print(
-                    f"  ❌ Shape mismatch: Got {output.shape}, Expected {expected_shape}"
+                    f"  ❌ Shape mismatch: Got output {output.shape}, centers {centers.shape}"
                 )
+                print(f"      Expected output {expected_shape}, centers {expected_centers_shape}")
+                return False
+
+            # Test with n_select (use half the points)
+            n_select = max(1, n_points // 2)
+            centers, output = model(positions, features, n_select=n_select)
+            expected_shape = (n_select, out_channels)
+            expected_centers_shape = (n_select, 3)
+
+            if output.shape == expected_shape and centers.shape == expected_centers_shape:
+                print(
+                    f"  ✅ Size with n_select={n_select}: output {output.shape}, centers {centers.shape}"
+                )
+            else:
+                print(
+                    f"  ❌ n_select shape mismatch: Got output {output.shape}, centers {centers.shape}"
+                )
+                print(f"      Expected output {expected_shape}, centers {expected_centers_shape}")
                 return False
 
         except Exception as e:
@@ -198,8 +234,9 @@ def test_gradient_flow():
     )
 
     try:
-        # Forward pass
-        output = model(positions, features)
+        # Forward pass with n_select
+        n_select = 20
+        centers, output = model(positions, features, n_select=n_select)
 
         # Create a dummy loss (sum of all outputs)
         loss = output.sum()
@@ -225,6 +262,7 @@ def test_gradient_flow():
             print("✅ Gradients flow correctly through the model")
             print(f"  Position grad norm: {positions.grad.norm():.6f}")
             print(f"  Feature grad norm: {features.grad.norm():.6f}")
+            print(f"  Output shape: {output.shape}, Centers shape: {centers.shape}")
             return True
         else:
             print("❌ Gradient flow issues:")
@@ -249,6 +287,7 @@ def test_pca_vs_no_pca():
     in_channels = 6
     out_channels = 12
     N, L, M = 2, 1, 1
+    n_select = 25
 
     positions, features = generate_test_point_cloud(n_points, in_channels, seed=123)
 
@@ -275,24 +314,35 @@ def test_pca_vs_no_pca():
     )
 
     try:
-        output_pca = model_pca(positions, features)
-        output_no_pca = model_no_pca(positions, features)
+        centers_pca, output_pca = model_pca(positions, features, n_select=n_select)
+        centers_no_pca, output_no_pca = model_no_pca(positions, features, n_select=n_select)
 
-        expected_shape = (n_points, out_channels)
+        expected_shape = (n_select, out_channels)
+        expected_centers_shape = (n_select, 3)
 
-        if output_pca.shape == expected_shape and output_no_pca.shape == expected_shape:
-            print(f"✅ Both PCA modes work correctly: {expected_shape}")
+        pca_shapes_ok = (output_pca.shape == expected_shape and
+                        centers_pca.shape == expected_centers_shape)
+        no_pca_shapes_ok = (output_no_pca.shape == expected_shape and
+                           centers_no_pca.shape == expected_centers_shape)
+
+        if pca_shapes_ok and no_pca_shapes_ok:
+            print(f"✅ Both PCA modes work correctly: output {expected_shape}, centers {expected_centers_shape}")
             print(f"  PCA output norm: {output_pca.norm():.6f}")
             print(f"  No-PCA output norm: {output_no_pca.norm():.6f}")
+            print(f"  PCA centers norm: {centers_pca.norm():.6f}")
+            print(f"  No-PCA centers norm: {centers_no_pca.norm():.6f}")
             return True
         else:
-            print(
-                f"❌ Shape issues - PCA: {output_pca.shape}, No-PCA: {output_no_pca.shape}"
-            )
+            print("❌ Shape issues:")
+            print(f"  PCA: output {output_pca.shape}, centers {centers_pca.shape}")
+            print(f"  No-PCA: output {output_no_pca.shape}, centers {centers_no_pca.shape}")
+            print(f"  Expected: output {expected_shape}, centers {expected_centers_shape}")
             return False
 
     except Exception as e:
         print(f"❌ PCA comparison failed with error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -304,6 +354,7 @@ def test_structured_data():
     in_channels = 4
     out_channels = 8
     N, L, M = 2, 1, 1
+    n_select = 15
 
     positions, features = generate_structured_point_cloud(grid_size, in_channels)
 
@@ -318,25 +369,33 @@ def test_structured_data():
     )
 
     try:
-        output = model(positions, features)
+        centers, output = model(positions, features, n_select=n_select)
         n_points = grid_size**3
-        expected_shape = (n_points, out_channels)
+        expected_shape = (n_select, out_channels)
+        expected_centers_shape = (n_select, 3)
 
-        if output.shape == expected_shape:
-            print(f"✅ Structured data test passed: {output.shape}")
+        if output.shape == expected_shape and centers.shape == expected_centers_shape:
+            print(f"✅ Structured data test passed: output {output.shape}, centers {centers.shape}")
             print(
-                f"  Grid size: {grid_size}x{grid_size}x{grid_size} = {n_points} points"
+                f"  Grid size: {grid_size}x{grid_size}x{grid_size} = {n_points} points -> {n_select} selected"
             )
             print(
                 f"  Output statistics: mean={output.mean():.6f}, std={output.std():.6f}"
             )
+            print(
+                f"  Centers statistics: mean={centers.mean():.6f}, std={centers.std():.6f}"
+            )
             return True
         else:
-            print(f"❌ Shape mismatch: Got {output.shape}, Expected {expected_shape}")
+            print(f"❌ Shape mismatch:")
+            print(f"    Got output {output.shape}, centers {centers.shape}")
+            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
             return False
 
     except Exception as e:
         print(f"❌ Structured data test failed with error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -349,6 +408,7 @@ def test_minimal_case():
     in_channels = 2
     out_channels = 4
     N, L, M = 2, 1, 1
+    n_select = 10
 
     positions, features = generate_test_point_cloud(n_points, in_channels, seed=999)
 
@@ -363,14 +423,17 @@ def test_minimal_case():
     )
 
     try:
-        output = model(positions, features)
-        expected_shape = (n_points, out_channels)
+        centers, output = model(positions, features, n_select=n_select)
+        expected_shape = (n_select, out_channels)
+        expected_centers_shape = (n_select, 3)
 
-        if output.shape == expected_shape:
-            print(f"✅ Minimal case passed: {output.shape}")
+        if output.shape == expected_shape and centers.shape == expected_centers_shape:
+            print(f"✅ Minimal case passed: output {output.shape}, centers {centers.shape}")
             return True
         else:
-            print(f"❌ Shape mismatch: Got {output.shape}, Expected {expected_shape}")
+            print(f"❌ Shape mismatch:")
+            print(f"    Got output {output.shape}, centers {centers.shape}")
+            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
             return False
 
     except Exception as e:
@@ -379,6 +442,63 @@ def test_minimal_case():
 
         traceback.print_exc()
         return False
+
+
+def test_n_select_variations():
+    """Test different n_select values including edge cases."""
+    print("\n--- Testing n_select Variations ---")
+
+    n_points = 50
+    in_channels = 4
+    out_channels = 8
+    N, L, M = 2, 1, 1
+
+    positions, features = generate_test_point_cloud(n_points, in_channels, seed=42)
+
+    model = DistanceContainedConv3d(
+        in_channels=in_channels,
+        out_channels=out_channels,
+        config=default_config,
+        N=N,
+        L=L,
+        M=M,
+        use_PCA=True,
+    )
+
+    # Test different n_select values
+    test_cases = [
+        (1, "minimum selection"),
+        (10, "small selection"),
+        (25, "half selection"),
+        (40, "large selection"),
+        (n_points, "all points"),
+        (n_points + 10, "more than available"),  # Should clamp to available points
+    ]
+
+    for n_select, description in test_cases:
+        try:
+            print(f"  Testing {description} (n_select={n_select})...")
+            centers, output = model(positions, features, n_select=n_select)
+
+            # Expected n_select should be clamped to available points
+            expected_n = min(n_select, n_points)
+            expected_shape = (expected_n, out_channels)
+            expected_centers_shape = (expected_n, 3)
+
+            if output.shape == expected_shape and centers.shape == expected_centers_shape:
+                print(f"    ✅ {description}: output {output.shape}, centers {centers.shape}")
+            else:
+                print(f"    ❌ Shape mismatch for {description}:")
+                print(f"       Got output {output.shape}, centers {centers.shape}")
+                print(f"       Expected output {expected_shape}, centers {expected_centers_shape}")
+                return False
+
+        except Exception as e:
+            print(f"    ❌ {description} failed with error: {e}")
+            return False
+
+    print("✅ All n_select variation tests passed!")
+    return True
 
 
 def run_all_tests():

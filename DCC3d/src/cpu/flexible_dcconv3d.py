@@ -89,41 +89,54 @@ class FlexibleDCConv3d(nn.Module):
             self.act = None
     
     def forward(
-        self, 
-        position_matrix: torch.Tensor, 
-        channel_matrix: torch.Tensor
+        self,
+        position_matrix: torch.Tensor,
+        channel_matrix: torch.Tensor,
+        n_select: int | None = None
     ) -> torch.Tensor:
         """
         前向传播 (Forward Pass with Flexible Configuration)
-        
+
         Args:
             position_matrix (torch.Tensor): 点云坐标矩阵
                 Shape: (N, 3), 其中 N 是点的数量，3 代表 (x, y, z)
             channel_matrix (torch.Tensor): 点的属性特征矩阵
                 Shape: (N, Cin), 其中 Cin 是输入通道数
-        
+            n_select (int | None): 从原始N个点中选择多少个点作为中心点
+
         Returns:
             output (torch.Tensor): 卷积后的特征（可能包含残差和激活）
-                Shape: (N, Cout), 其中 Cout 是输出通道数
+                Shape: (n_select, Cout), 其中 Cout 是输出通道数
         """
         # 主路径：通过点云卷积层
         # position_matrix: (N, 3) - 用于邻居选择和坐标转换
         # channel_matrix: (N, Cin) - 输入特征
-        x = self.conv(position_matrix, channel_matrix)  # Shape: (N, Cout)
-        
+        centers, x = self.conv(position_matrix, channel_matrix, n_select)  # centers: (n_select, 3), x: (n_select, Cout)
+
         # 残差路径：根据配置决定是否添加
         if self.use_residual:
+            # 需要先根据选择的中心点来调整残差路径
+            if n_select is None or n_select >= position_matrix.shape[0]:
+                # 如果选择全部点或更多，直接使用原始特征
+                shortcut_input = channel_matrix
+            else:
+                # 如果选择了部分点，需要从原始特征中选择对应的点
+                # 这里需要知道选择的点的索引，但是这个信息在 conv 中丢失了
+                # 一个简单的解决方案是使用 select_n_points_minimal_variance 重新选择
+                from .selector import select_n_points_minimal_variance
+                _, selected_indices = select_n_points_minimal_variance(position_matrix, n_select)
+                shortcut_input = channel_matrix[selected_indices]  # Shape: (n_select, Cin)
+
             # 计算残差路径：只处理特征，不处理坐标
-            # channel_matrix: (N, Cin) -> (N, Cout)
-            shortcut = self.shortcut(channel_matrix)  # Shape: (N, Cout)
-            
+            shortcut = self.shortcut(shortcut_input)  # Shape: (n_select, Cout)
+
             # 特征融合：主路径 + 残差路径
-            x = x + shortcut  # Shape: (N, Cout)
-        
+            x = x + shortcut  # Shape: (n_select, Cout)
+
         # 激活函数：根据配置决定是否应用
         if self.activation:
-            x = self.act(x)  # Shape: (N, Cout)
-        
+            x = self.act(x)  # Shape: (n_select, Cout)
+
         return x
     
     def extra_repr(self) -> str:
@@ -220,24 +233,30 @@ class DCConv3dBlock(nn.Module):
             self.layers.append(layer)
     
     def forward(
-        self, 
-        position_matrix: torch.Tensor, 
-        channel_matrix: torch.Tensor
+        self,
+        position_matrix: torch.Tensor,
+        channel_matrix: torch.Tensor,
+        n_select: int | None = None
     ) -> torch.Tensor:
         """
         前向传播（顺序执行所有卷积层）
-        
+
         Args:
             position_matrix (torch.Tensor): 点云坐标矩阵 (N, 3)
             channel_matrix (torch.Tensor): 输入特征矩阵 (N, Cin)
-        
+            n_select (int | None): 从原始N个点中选择多少个点作为中心点
+
         Returns:
-            output (torch.Tensor): 输出特征矩阵 (N, Cout)
+            output (torch.Tensor): 输出特征矩阵 (n_select, Cout)
         """
         x = channel_matrix
-        
+        current_positions = position_matrix
+
         # 逐层前向传播
-        for layer in self.layers:
-            x = layer(position_matrix, x)
-        
+        for i, layer in enumerate(self.layers):
+            x = layer(current_positions, x, n_select)
+            # 第一层后，position_matrix 应该被更新为选择后的中心点
+            # 但由于我们每层都在原始 position_matrix 上选择，这里暂时保持原样
+            # 如果需要逐层传递位置信息，需要从 FlexibleDCConv3d 返回更新的位置
+
         return x

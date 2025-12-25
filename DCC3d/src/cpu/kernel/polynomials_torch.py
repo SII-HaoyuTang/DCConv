@@ -778,11 +778,12 @@ class SphericalHarmonicSeries:
         """
         for k in range(self.max_k + 1):
             for m in range(-self.max_m, self.max_m + 1):
-                if self.check(k, m):
-                    continue
-                else:
-                    func: Callable = SphericalHarmonicFunc(k, m, self.dtype)
-                    self.spherical_harmonic_series[(k, m)] = func
+                if abs(m) <= k:
+                    if self.check(k, m):
+                        continue
+                    else:
+                        func: Callable = SphericalHarmonicFunc(k, m, self.dtype)
+                        self.spherical_harmonic_series[(k, m)] = func
 
     def check(self, k: int, m: int) -> bool:
         """
@@ -816,7 +817,7 @@ class SphericalHarmonicSeries:
             None
         """
         self.max_k = max(dest_k, self.max_k)
-        self.max_m = max(dest_m, self.max_m)
+        self.max_m = max(abs(dest_m), self.max_m)
         self._update_spherical_harmonic_funcs()
 
     def __call__(self, k: int, m: int) -> Callable:
@@ -840,7 +841,7 @@ class SphericalHarmonicSeries:
             self.spherical_harmonic_series are not documented here but should be handled
             appropriately in the calling code.
         """
-        if k > self.max_k or m > self.max_m:
+        if k > self.max_k or abs(m) > self.max_m:
             self.extend(k, m)
         return self.spherical_harmonic_series[(k, m)]
 
@@ -1015,9 +1016,9 @@ class HydrogenWaveFuncsSeries:
 
     def __init__(
         self,
-        max_n: int = 4,
-        max_k: int = 3,
-        max_m: int = 3,
+        max_n: int = 5,
+        max_k: int = 4,
+        max_m: int = 4,
         dtype: torch.dtype = torch.float32,
     ):
         if not (isinstance(max_n, int) and max_n > 0):
@@ -1049,14 +1050,15 @@ class HydrogenWaveFuncsSeries:
         for n in range(self.max_n):
             for k in range(self.max_k + 1):
                 for m in range(-self.max_m, self.max_m + 1):
-                    if self.check(n, k, m):
-                        continue
-                    else:
-                        func: Callable = HydrogenWaveFunc(n + 1, k, m, self.dtype)
-                        self.hydrogen_wave_funcs_series[(n + 1, k, m)] = func
+                    if abs(m) <= k and k < n + 1:
+                        if self.check(n + 1, k, m):
+                            continue
+                        else:
+                            func: Callable = HydrogenWaveFunc(n + 1, k, m, self.dtype)
+                            self.hydrogen_wave_funcs_series[(n + 1, k, m)] = func
 
     def check(self, n: int, k: int, m: int) -> bool:
-        if not self.hydrogen_wave_funcs_series[(n, k, m)]:
+        if not self.hydrogen_wave_funcs_series.get((n, k, m)):
             return False
         else:
             return True
@@ -1064,7 +1066,7 @@ class HydrogenWaveFuncsSeries:
     def extend(self, dest_n: int, dest_k: int, dest_m: int) -> None:
         self.max_n = max(dest_n, self.max_n)
         self.max_k = max(dest_k, self.max_k)
-        self.max_m = max(dest_m, self.max_m)
+        self.max_m = max(abs(dest_m), self.max_m)
         self._update_hydrogen_wave_funcs()
 
     def __call__(self, n: int, k: int, m: int) -> Callable:

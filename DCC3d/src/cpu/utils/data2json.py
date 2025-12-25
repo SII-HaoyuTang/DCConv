@@ -181,4 +181,4 @@ data["vibrationalfrequence"] = vibrationalfrequence
 data["inchi"] = inchi
 
 print(data)
-data.to_json("qm9.json")
+data.to_json("../../../../data/qm9.json")

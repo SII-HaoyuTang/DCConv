@@ -1,19 +1,20 @@
+import os  # 添加os模块
+
 import pandas as pd
 from numpy.ma.core import indices
 from tqdm import tqdm
-import os  # 添加os模块
 
 
 def read_folder(folder_path="./133660_curatedQM9_outof_133885"):  # 修改函数名和参数
     file_name = []
 
     mol_len = []
-    atom_coords_x = [] # in angstrom
+    atom_coords_x = []  # in angstrom
     atom_coords_y = []
     atom_coords_z = []
-    atom_mass = [] # in relative atom mass
+    atom_mass = []  # in relative atom mass
     atom_valence_electrons = []
-    atom_radius = [] # in angstrom
+    atom_radius = []  # in angstrom
     atom_mulliken_charge = []  # Mulliken partial charges (in e) on atoms
     molecule_id = []
     molecule_id_per_atom = []
@@ -79,8 +80,6 @@ def read_folder(folder_path="./133660_curatedQM9_outof_133885"):  # 修改函数
                 else:
                     raise ValueError("atom_type_error")
 
-
-
     return (
         file_name,
         mol_len,
@@ -117,22 +116,22 @@ def main():
     data = pd.DataFrame()
     indics = pd.DataFrame()
 
-    data['molecule_id'] = molecule_id_per_atom
-    data['x'] = atom_coords_x
-    data['y'] = atom_coords_y
-    data['z'] = atom_coords_z
-    data['atom_mass'] = atom_mass
-    data['atom_valence_electrons'] = atom_valence_electrons
-    data['atom_radius'] = atom_radius
-    data['atom_mulliken_charge'] = atom_mulliken_charge
+    data["molecule_id"] = molecule_id_per_atom
+    data["x"] = atom_coords_x
+    data["y"] = atom_coords_y
+    data["z"] = atom_coords_z
+    data["atom_mass"] = atom_mass
+    data["atom_valence_electrons"] = atom_valence_electrons
+    data["atom_radius"] = atom_radius
+    data["atom_mulliken_charge"] = atom_mulliken_charge
 
-    indics['molecule_id'] = molecule_id
-    indics['num_atoms'] = mol_len
-    indics['internal_energy'] = U  # Internal energy at 298.15K
+    indics["molecule_id"] = molecule_id
+    indics["num_atoms"] = mol_len
+    indics["internal_energy"] = U  # Internal energy at 298.15K
 
+    data.to_csv("../../../../data/qm9.csv", index=False)
+    indics.to_csv("../../../../data/qm9_indices.csv", index=False)
 
-    data.to_csv("qm9.csv", index=False)
-    indics.to_csv("qm9_indices.csv", index=False)
 
 if __name__ == "__main__":
     main()

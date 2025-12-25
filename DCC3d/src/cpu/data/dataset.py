@@ -1,8 +1,9 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-import pandas as pd
+from typing import Dict, List, Optional
+
 import numpy as np
-from typing import Optional, Dict, List
+import pandas as pd
+import torch
+from torch.utils.data import DataLoader, Dataset
 
 
 class PointCloudQM9Dataset(Dataset):
@@ -281,7 +282,8 @@ class PointCloudTransform:
 
     def __call__(self, sample: Dict) -> Dict:
         """应用变换"""
-        pos = sample["pos"]
+        # one sample is one point cloud
+        pos = sample["pos"]  # position x, y, z
         x = sample["x"]
 
         # 1. 中心化点云
@@ -292,7 +294,9 @@ class PointCloudTransform:
         # 2. 标准化坐标
         if self.normalize_pos:
             pos_std = pos.std(dim=0, keepdim=True)
-            pos_std = torch.where(torch.Tensor(pos_std == 0), torch.ones_like(pos_std), pos_std)
+            pos_std = torch.where(
+                torch.Tensor(pos_std == 0), torch.ones_like(pos_std), pos_std
+            )
             pos = pos / pos_std
 
         # 3. 标准化特征
@@ -328,8 +332,8 @@ class PointCloudTransform:
 # 使用示例
 if __name__ == "__main__":
     # 数据集路径
-    points_csv = "qm9.csv"
-    indices_csv = "qm9_indices.csv"
+    points_csv = "./data/qm9.csv"
+    indices_csv = "./data/qm9_indices.csv"
 
     # 创建变换
     transform = PointCloudTransform(
@@ -345,7 +349,12 @@ if __name__ == "__main__":
         indices_csv=indices_csv,
         transform=transform,
         target_column="internal_energy",
-        node_features=['atom_mass', 'atom_valence_electrons', 'atom_radius', 'atom_mulliken_charge'],  # 根据实际列名调整
+        node_features=[
+            "atom_mass",
+            "atom_valence_electrons",
+            "atom_radius",
+            "atom_mulliken_charge",
+        ],  # 根据实际列名调整
     )
 
     # 划分数据集

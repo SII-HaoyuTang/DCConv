@@ -1,6 +1,11 @@
 from abc import ABC, abstractmethod
-from enum import StrEnum
-from typing import NotRequired, TypedDict
+from enum import Enum
+from typing import TypedDict
+
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 
 import torch
 
@@ -525,7 +530,7 @@ class DilatedKNNSelector(BaseSelector):
         return dilated_indices.long()
 
 
-class SelectorType(StrEnum):
+class SelectorType(str, Enum):
     KNN = "knn"
     BALL_QUERY = "ball_query"
     DILATED = "dilated"

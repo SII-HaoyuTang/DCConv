@@ -1,4 +1,5 @@
 import math
+import os
 from collections.abc import Callable
 from typing import Dict, Tuple, Type
 
@@ -6,13 +7,23 @@ import numpy as np
 import torch
 
 
-@torch.compile  # 使用编译消除 Python 循环开销
-def poly_eval(x, coeffs):
+# 定义 poly_eval 函数（未编译版本）
+def _poly_eval_impl(x, coeffs):
     # coeffs 顺序: [an, ..., a1, a0]
     result = torch.zeros_like(x)
     for c in coeffs:
         result = result * x + c
     return result
+
+
+# 尝试编译，如果失败则使用未编译版本
+if os.environ.get('TORCH_COMPILE_DISABLE', '0') == '1':
+    poly_eval = _poly_eval_impl
+else:
+    try:
+        poly_eval = torch.compile(_poly_eval_impl)
+    except Exception:
+        poly_eval = _poly_eval_impl
 
 
 class AssociatedLaguerrePoly:

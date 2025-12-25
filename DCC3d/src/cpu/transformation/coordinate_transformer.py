@@ -86,8 +86,19 @@ class CoordinateTransformerTorch(nn.Module):
 
         # 编译核心计算函数以加速
         if self.use_compile:
-            self._apply_pca_batch = torch.compile(self._apply_pca_batch_impl)
-            print(f"✓ 使用 torch.compile 加速（PyTorch {torch.__version__}）")
+            # 尝试使用 torch.compile，如果失败则回退
+            import os
+            # 允许通过环境变量禁用编译（用于没有 C++ 编译器的环境）
+            if os.environ.get('TORCH_COMPILE_DISABLE', '0') == '1':
+                self._apply_pca_batch = self._apply_pca_batch_impl
+                print(f"⚠ torch.compile 已通过环境变量禁用")
+            else:
+                try:
+                    self._apply_pca_batch = torch.compile(self._apply_pca_batch_impl)
+                    print(f"✓ 使用 torch.compile 加速（PyTorch {torch.__version__}）")
+                except Exception as e:
+                    print(f"⚠ torch.compile 编译失败 ({e})，回退到普通模式")
+                    self._apply_pca_batch = self._apply_pca_batch_impl
         else:
             self._apply_pca_batch = self._apply_pca_batch_impl
 

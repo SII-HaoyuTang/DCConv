@@ -144,7 +144,7 @@ class MultiLayerResBlock(nn.Module):
 
         执行流程：
         1. 保存输入特征用于跨层残差连接
-        2. 顺序执行所有卷积层（主路径）
+        2. 顺序执行所有卷积层（主路径），每层更新位置
         3. 计算 shortcut 路径（可能包含维度投影）
         4. 融合主路径和 shortcut 路径
         5. 应用最终激活函数
@@ -157,29 +157,58 @@ class MultiLayerResBlock(nn.Module):
             n_select (int | None): 从原始N个点中选择多少个点作为中心点
 
         Returns:
+            centers (torch.Tensor): 输出中心点坐标
+                Shape: (n_select, 3)
             output (torch.Tensor): 输出特征矩阵（经过跨层残差连接和激活）
                 Shape: (n_select, Cout), 其中 Cout 是输出通道数
         """
         # 保存输入用于跨层残差连接
         identity = channel_matrix  # Shape: (N, Cin)
+        original_positions = position_matrix  # 保存原始位置用于 shortcut
 
         # 主路径：顺序执行所有卷积层
+        # 第一层在原始点云上操作并选择中心点
+        # 后续层在上一层的中心点上继续操作
+        current_positions = position_matrix
         x = channel_matrix
-        for layer in self.conv_layers:
-            # 注意：position_matrix 保持不变，x（特征）在逐层变换
-            x = layer(position_matrix, x, n_select)  # Shape: (N, C_i) -> (n_select, C_{i+1})
+        
+        for i, layer in enumerate(self.conv_layers):
+            # 每一层都会更新位置（通过选择中心点）
+            # 注意：layer 内部调用 self.conv，会返回 (centers, features)
+            # 但 FlexibleDCConv3d.forward 只返回 features
+            # 我们需要访问内部的 centers
+            
+            # 调用 layer 的内部 conv 来获取 centers 和 features
+            if i == 0:
+                # 第一层：从原始点中选择 n_select 个中心点
+                centers, x = layer.conv(current_positions, x, n_select)
+            else:
+                # 后续层：在上一层的中心点上操作，选择所有点（None）
+                centers, x = layer.conv(current_positions, x, None)
+            
+            # 应用残差和激活（如果 layer 启用了的话）
+            if layer.use_residual:
+                # 如果启用了内部残差，需要处理（但我们在 __init__ 中都关闭了）
+                pass
+            
+            if layer.activation:
+                # 应用激活函数
+                x = layer.act(x)
+            
+            # 更新位置为当前层的中心点
+            current_positions = centers
 
         # 最后一层输出: (n_select, Cout)，此时还未经过激活函数
 
         # Shortcut 路径：处理输入特征的维度
         # 需要根据选择的中心点来调整残差路径
-        if n_select is None or n_select >= position_matrix.shape[0]:
+        if n_select is None or n_select >= original_positions.shape[0]:
             # 如果选择全部点或更多，直接使用原始特征
             shortcut_input = identity
         else:
             # 如果选择了部分点，需要从原始特征中选择对应的点
             from .selector import select_n_points_minimal_variance
-            _, selected_indices = select_n_points_minimal_variance(position_matrix, n_select)
+            _, selected_indices = select_n_points_minimal_variance(original_positions, n_select)
             shortcut_input = identity[selected_indices]  # Shape: (n_select, Cin)
 
         shortcut = self.shortcut(shortcut_input)  # Shape: (n_select, Cout)
@@ -190,7 +219,7 @@ class MultiLayerResBlock(nn.Module):
         # 最终激活：在残差相加后应用
         output = self.final_act(x)  # Shape: (n_select, Cout)
 
-        return output
+        return current_positions, output
     
     def extra_repr(self) -> str:
         """
@@ -288,10 +317,13 @@ class ResidualDCConv3dNetwork(nn.Module):
         Returns:
             output (torch.Tensor): 输出特征矩阵 (n_select, Cout)
         """
+        current_pos = position_matrix
         x = channel_matrix
 
-        # 逐块执行
-        for block in self.blocks:
-            x = block(position_matrix, x, n_select)
+        # 逐块执行，每个块更新位置和特征
+        for i, block in enumerate(self.blocks):
+            # 第一个 block 使用 n_select，后续 block 使用所有点
+            n_sel = n_select if i == 0 else None
+            current_pos, x = block(current_pos, x, n_sel)
 
         return x

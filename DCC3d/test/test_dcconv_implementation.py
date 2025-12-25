@@ -12,6 +12,12 @@ This test file validates:
 Run with: python test_dcconv_implementation.py
 """
 
+import os
+# 在 Windows 上禁用 torch.compile，避免需要 C++ 编译器
+if os.name == 'nt':  # Windows
+    os.environ['TORCH_COMPILE_DISABLE'] = '1'
+    print("⚠ Windows 环境检测到，已禁用 torch.compile")
+
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))  # To access DCC3d module

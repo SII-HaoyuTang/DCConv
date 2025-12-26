@@ -9,19 +9,15 @@ from .transformation import CoordinateTransformer
 
 class DistanceContainedConv3d(nn.Module):
     """
-    A 3D convolutional layer that incorporates distance information for feature transformation and aggregation.
-    The layer processes input tensors through a series of steps including neighbor selection, coordinate transformation,
-    kernel weight generation, and feature aggregation. The output is a tensor that combines the transformed features
-    with the centers of the original positions.
+    A 3D convolutional layer that incorporates distance information for more effective feature extraction in point
+    cloud data.
 
-    Detailed description:
-    This class implements a 3D convolutional layer designed to handle spatial data with an emphasis on maintaining
-    distance information between points. It utilizes a coordinate transformer, a selector for neighbor points,
-    a kernel for generating dynamic weights based on spherical coordinates, and an aggregation layer to combine
-    features. The primary goal is to enhance the representation of spatial relationships in the input data,
-    making it suitable for tasks that require understanding of geometric structures.
+    This class defines a 3D convolution operation that takes into account the spatial relationships and distances
+    between points. It is designed to work with point cloud data, where each point has a position and associated
+    features (channels). The layer includes steps for neighbor selection, coordinate transformation, kernel weight
+    generation, and feature aggregation. Optionally, it can also incorporate a ResNet-like residual connection for
+    improved gradient flow during training.
     """
-
     def __init__(
         self,
         in_channels: int,
@@ -30,83 +26,153 @@ class DistanceContainedConv3d(nn.Module):
         N: int,
         L: int,
         M: int,
+        conv_num: int,
         use_PCA: bool = True,
+        use_resnet: bool = True,
     ):
+        """
+        Initializes a new instance of the DistanceContainedConv3d class, which is designed to perform 3D convolutions
+        with distance-contained kernels. This class integrates a coordinate transformer, a selector, and an aggregation
+        layer, and optionally uses PCA and ResNet.
+
+        Parameters:
+        ----------
+        in_channels: int
+            The number of input channels.
+        out_channels: int
+            The number of output channels.
+        config: SelectorConfig
+            Configuration for the selector.
+        N: int
+            A parameter for the DCConv3dKernelPolynomials.
+        L: int
+            A parameter for the DCConv3dKernelPolynomials.
+        M: int
+            A parameter for the DCConv3dKernelPolynomials.
+        conv_num: int
+            The points number in one local convolution.
+        use_PCA: bool, optional
+            Whether to use PCA in the coordinate transformation. Default is True.
+        use_resnet: bool, optional
+            Whether to include a ResNet block. Default is True.
+
+        Attributes:
+        ----------
+        conv_nums: int
+            The points number in one local convolution.
+        cotrans: CoordinateTransformer
+            Transformer for coordinates, possibly using PCA.
+        selector: Selector
+            Selector object created from the given configuration.
+        kernel: DCConv3dKernelPolynomials
+            Kernel for the 3D convolution operation.
+        aggregation: AggregationLayer
+            Layer for aggregating the results of the convolution.
+        use_resnet: bool
+            Indicates if a ResNet block is used.
+        in_channels: int
+            The number of input channels, set when use_resnet is True.
+        out_channels: int
+            The number of output channels, set when use_resnet is True.
+        """
         super(DistanceContainedConv3d, self).__init__()
+        self.conv_nums = conv_num
         self.cotrans = CoordinateTransformer(use_pca=use_PCA)
         self.selector = SelectorFactory.get_selector(config)
         self.kernel = DCConv3dKernelPolynomials(out_channels, in_channels, N, L, M)
         self.aggregation = AggregationLayer()
+        self.use_resnet = use_resnet
+        if self.use_resnet:
+            self.in_channels = in_channels
+            self.out_channels = out_channels
 
     def forward(
         self,
         position_matrix: torch.Tensor,
         channel_matrix: torch.Tensor,
-        n_select: int | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Forward pass of the network.
-
-        Summary:
-        This function performs a forward pass through the network, executing several steps including
-        neighbor selection, coordinate transformation, kernel weight generation, and feature aggregation.
-        The input consists of a position matrix and a channel matrix, and the output is a tuple containing
-        the centers and the processed output tensor after processing.
-
-        Parameters:
-        - position_matrix (torch.Tensor): The input position matrix for the points. Shape: (N, 3)
-        - channel_matrix (torch.Tensor): The input channel matrix for the features. Shape: (N, in_channels)
-        - n_select (int | None): Number of points to select from N points. If None, use all N points.
-
-        Returns:
-        - tuple[torch.Tensor, torch.Tensor]: A tuple containing the centers and the processed output tensor.
-        """
+        space_points_num: int,
+        outpoint_num: int,
+        resnet_channel: torch.Tensor | None = None,
+    ) -> (
+        tuple[torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ):
+        """ """
+        if space_points_num < outpoint_num:
+            raise ValueError(
+                f"space_points_num must be greater than outpoint_num, but got {space_points_num} and {outpoint_num}"
+            )
 
         # Step 1: 邻居选择 (Neighbor Selection)
-        # 使用选择器为每个点选择邻居，传入 n_select 参数
-        N = position_matrix.shape[0]
-        n_sample = 16  # Default neighbor count, could be made configurable
+        conv_num = space_points_num - outpoint_num + 1
+        conv_num = min(conv_num, self.conv_nums)
 
-        # If n_select is not provided, use all points
-        if n_select is None:
-            n_select = N
-
-        # Create dummy indices tensor for compatibility with selector interface
-        indices = torch.zeros(N, 1, dtype=torch.long, device=position_matrix.device)
+        # 按照空间数目生成线性间隔的张量,之后重复每个值空间中点数次，最后生成归属向量belonging
+        space_num = int(position_matrix.shape[0] / space_points_num)
+        linspace_tensor = torch.linspace(1, space_num, space_num)
+        belonging = linspace_tensor.repeat_interleave(space_points_num)
 
         neighbor_indices = self.selector(
-            position_matrix, indices, n_sample, n_select
-        )  # Shape: (n_select, k)
+            position_matrix, belonging, conv_num, outpoint_num
+        )  # Shape: (outpoint_num, k)
 
         # Step 2: 坐标转换 (Coordinate Transformation)
         # 将绝对坐标转换为相对的球极坐标
         # Note: We need to use the selected subset for coordinate transformation
-        spherical_coords, centers, eigenvalues, local_features = self.cotrans.forward(
+        spherical_coords, centers, _, local_features = self.cotrans.forward(
             global_coords=position_matrix,
             neighbor_indices=neighbor_indices,
             global_features=channel_matrix,
         )
-        # spherical_coords: (n_select, k, 3) - 球极坐标 (r, θ, φ)
-        # local_features: (n_select, k, Ci) - 局部属性特征
-        # centers: (n_select, 3) - 选择的中心点坐标
+        # spherical_coords: (outpoint_num, k, 3) - 球极坐标 (r, θ, φ)
+        # local_features: (outpoint_num, k, Ci) - 局部属性特征
+        # centers: (outpoint_num, 3) - 选择的中心点坐标
 
         # Step 3: 核权重生成 (Kernel Weight Generation)
         # 基于球极坐标生成动态卷积核权重
         kernel_weights = self.kernel.forward(
             spherical_coords
-        )  # Shape: (Co, Ci, n_select, k)
+        )  # Shape: (Co, Ci, outpoint_num, k)
 
         # Step 4: 特征聚合 (Feature Aggregation)
-        # 需要将 local_features 从 (n_select, k, Ci) 转换为 (Ci, n_select, k)
-        local_features_transposed = local_features.permute(2, 0, 1)  # (Ci, n_select, k)
+        # 需要将 local_features 从 (outpoint_num, k, Ci) 转换为 (Ci, outpoint_num, k)
+        local_features = local_features.permute(
+            2, 0, 1
+        )  # (Ci, outpoint_num, k)
 
         # 使用聚合层进行加权求和
         output = self.aggregation.forward(
-            local_features_transposed, kernel_weights
-        )  # Shape: (Co, n_select)
-        output = output.permute(1, 0)  # (n_select, Co)
+            local_features, kernel_weights
+        )  # Shape: (Co, outpoint_num)
+        output = output.permute(1, 0)  # (outpoint_num, Co)
 
-        return (
-            centers,
-            output,
-        )
+        if self.use_resnet:
+            # if resnet_channel is given by last DCConv, resnet continue. Else the shortcut has been done, start a
+            # new resnet.
+            if isinstance(resnet_channel, torch.Tensor):
+                resnet_channel = self.cotrans.extract_local_features(resnet_channel, neighbor_indices)
+                resnet_channel = resnet_channel.permute(2, 0, 1)
+            else:
+                resnet_channel = local_features.clone()
+
+            # Step 3': 残差核权重生成 (Resnet Kernel Weight Generation)
+            resnet_kernel_weights = torch.ones(
+                self.out_channels, self.in_channels, outpoint_num*space_num, conv_num
+            )  # Shape: (Co, Ci, outpoint_num, k)
+
+            # Step 4‘: 特征聚合 (Feature Aggregation)
+            # 使用聚合层进行加权求和
+            resnet_output = self.aggregation.forward(
+                resnet_channel, resnet_kernel_weights
+            )  # Shape: (Co, outpoint_num)
+            resnet_output = resnet_output.permute(1, 0)  # (outpoint_num, Co)
+            return (
+                centers,
+                output,
+                resnet_output,
+            )
+        else:
+            return (
+                centers,
+                output,
+            )

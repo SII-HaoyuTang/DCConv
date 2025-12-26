@@ -91,11 +91,10 @@ class CoordinateTransformerTorch(nn.Module):
             # 允许通过环境变量禁用编译（用于没有 C++ 编译器的环境）
             if os.environ.get('TORCH_COMPILE_DISABLE', '0') == '1':
                 self._apply_pca_batch = self._apply_pca_batch_impl
-                print(f"⚠ torch.compile 已通过环境变量禁用")
+                print("⚠ torch.compile 已通过环境变量禁用")
             else:
                 try:
                     self._apply_pca_batch = torch.compile(self._apply_pca_batch_impl)
-                    print(f"✓ 使用 torch.compile 加速（PyTorch {torch.__version__}）")
                 except Exception as e:
                     print(f"⚠ torch.compile 编译失败 ({e})，回退到普通模式")
                     self._apply_pca_batch = self._apply_pca_batch_impl
@@ -162,8 +161,6 @@ class CoordinateTransformerTorch(nn.Module):
             则返回 (N_centers, K, 118)，即每个中心点的邻居的原子类型特征
         """
         # 通过索引提取局部特征（可微分）
-        print(f"neighbor_indices shape: {neighbor_indices.shape}")
-        print(f"global_features shape: {global_features.shape}")
         local_features = global_features[neighbor_indices]  # (N_centers, K, Ci)
 
         return local_features

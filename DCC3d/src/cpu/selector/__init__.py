@@ -8,8 +8,6 @@ from .selector_torch import (
     SelectorType,
     calc_pairwise_distance,
     default_config,
-    get_reduction_schedule,
-    monte_carlo_fill_tensor,
     select_n_points_minimal_variance,
 )
 
@@ -23,7 +21,5 @@ __all__ = [
     "SelectorType",
     "calc_pairwise_distance",
     "default_config",
-    "get_reduction_schedule",
-    "monte_carlo_fill_tensor",
     "select_n_points_minimal_variance",
 ]

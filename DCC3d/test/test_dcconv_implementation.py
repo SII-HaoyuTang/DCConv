@@ -277,6 +277,8 @@ def test_dcconv_resnet():
             L=2,
             M=2,
         )
+        from torchinfo import summary
+        summary(model, input_size=(positions.shape, features.shape))
 
         print(
             f"ResNet model created with {sum(p.numel() for p in model.parameters())} parameters"

@@ -398,9 +398,8 @@ class SphericalHarmonicFunc:
 
         # 使用霍纳法计算多项式部分（包含归一化常数）
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
-        poly_val: torch.Tensor = torch.zeros_like(x)
-        for i in range(len(coeffs) - 1, -1, -1):
-            poly_val = poly_val * x + coeffs[i]
+        poly_val = _poly_eval_impl(x, coeffs)
+
 
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^m
         if self.m_abs > 0:
@@ -423,9 +422,7 @@ class SphericalHarmonicFunc:
 
         # 使用霍纳法计算多项式部分（包含归一化常数）
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
-        poly_val: torch.Tensor = torch.zeros_like(x)
-        for i in range(len(coeffs) - 1, -1, -1):
-            poly_val = poly_val * x + coeffs[i]
+        poly_val = _poly_eval_impl(x, coeffs)
 
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^{|m|}
         if self.m_abs > 0:
@@ -509,8 +506,7 @@ class SphericalHarmonicFunc:
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)
         if len(deriv_coeffs) > 0:
-            for i in range(len(deriv_coeffs) - 1, -1, -1):
-                poly_deriv_val = poly_deriv_val * x + deriv_coeffs[i]
+            poly_deriv_val = _poly_eval_impl(x,deriv_coeffs)
 
         # \frac{1}{\sin\theta} (|m| Saved - N \cos(m\phi) sin^{|m|+2}\theta Poly')
         dY_dtheta: torch.Tensor = (
@@ -569,8 +565,7 @@ class SphericalHarmonicFunc:
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)
         if len(deriv_coeffs) > 0:
-            for i in range(len(deriv_coeffs) - 1, -1, -1):
-                poly_deriv_val = poly_deriv_val * x + deriv_coeffs[i]
+            poly_deriv_val = _poly_eval_impl(x,deriv_coeffs)
 
         # \frac{1}{\sin\theta} (|m| Saved - N \sin(m\phi) sin^{|m|+2}\theta Poly')
         dY_dtheta: torch.Tensor = (

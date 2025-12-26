@@ -1,9 +1,108 @@
 from typing import Dict, List, Optional
+import re
 
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
+
+
+def fix_decimal_point(value):
+    """
+    修复基数部分的小数点问题
+    """
+    # 使用正则表达式找到科学计数法格式
+    pattern = r"([+-]?\d*\.?\d*)[eE]([+-]?\d+)"
+    match = re.match(pattern, value)
+
+    if match:
+        num = match.group(1)
+        exp = match.group(2)
+
+        # 修复各种小数点格式问题
+        if num == "" or num in ["+", "-"]:
+            num = num + "1"
+        elif num.endswith("."):
+            num = num + "0"
+        elif num.startswith(".") and not num.startswith("-."):
+            num = "0" + num
+        elif num.startswith("-."):
+            num = "-0." + num[2:]
+
+        return f"{num}e{exp}"
+
+    return value
+
+def clean_scientific_notation(value):
+    """
+    更健壮的清理函数，处理各种边缘情况
+    """
+    if pd.isna(value):
+        return value
+
+    str_value = str(value).strip()
+
+    # 如果已经是数字，直接返回
+    try:
+        float(str_value)
+        return str_value
+    except ValueError:
+        pass
+
+    # 常见的非标准科学计数法模式
+    patterns = [
+        # 模式1: 数字E/e^数字（如 -6.E^-6）
+        (r'([+-]?\d*\.?\d*)[Ee]\^([+-]?\d+)', r'\1e\2'),
+        # 模式2: 数字E/e^+数字（如 1.23E^+4）
+        (r'([+-]?\d*\.?\d*)[Ee]\^\+(\d+)', r'\1e+\2'),
+        # 模式3: 数字E/e^-数字（如 5.67e^-3）
+        (r'([+-]?\d*\.?\d*)[Ee]\^-(\d+)', r'\1e-\2'),
+        # 模式4: 数字E/e数字（没有^，但可能有问题）
+        (r'([+-]?\d*\.?\d*)[Ee](\d+)', r'\1e\2'),
+    ]
+
+    original = str_value
+    for pattern, replacement in patterns:
+        cleaned = re.sub(pattern, replacement, original)
+        if cleaned != original:
+            # 修复基数部分的小数点问题
+            cleaned = fix_decimal_point(cleaned)
+            return cleaned
+
+    # 如果正则表达式没有匹配，尝试简单替换
+    if '^' in str_value:
+        cleaned = str_value.replace('^', '')
+        cleaned = fix_decimal_point(cleaned)
+        return cleaned
+
+    return str_value
+
+
+def clean_dataframe_scientific_notation(df):
+    """
+    清理DataFrame中所有列的非标准科学计数法
+    """
+    cleaned_df = df.copy()
+
+    for col in cleaned_df.columns:
+        # 只处理字符串类型的列
+        if cleaned_df[col].dtype == object:
+            cleaned_df[col] = cleaned_df[col].apply(clean_scientific_notation)
+
+    return cleaned_df
+
+
+def safe_convert_to_numeric(series):
+    """
+    安全地将序列转换为数值类型
+    """
+    # 先清理科学计数法
+    cleaned_series = series.apply(clean_scientific_notation)
+
+    # 转换为数值，无法转换的设为NaN
+    numeric_series = pd.to_numeric(cleaned_series, errors="coerce")
+
+    return numeric_series
 
 
 class PointCloudQM9Dataset(Dataset):
@@ -39,15 +138,14 @@ class PointCloudQM9Dataset(Dataset):
             获取分子的SMILES表示（如果有）。
     """
 
-    def __init__(
-        self,
-        points_csv: str,
-        indices_csv: str,
-        transform: Optional[callable] = None,
-        target_column: str = "internal_energy",
-        node_features: List[str] = None,
-        device: str = "cpu",
-    ):
+    def __init__(self,
+                 points_csv: str,
+                 indices_csv: str,
+                 transform: Optional[callable] = None,
+                 target_column: str = 'energy',
+                 node_features: List[str] = None,
+                 clean_scientific_notation: bool = True,
+                 device: str = 'cpu'):
         """
         Initializes a dataset for molecular data, loading points and indices from CSV files.
 
@@ -75,29 +173,35 @@ class PointCloudQM9Dataset(Dataset):
         """
         super().__init__()
 
-        self.points_csv: str = points_csv
-        self.indices_csv: str = indices_csv
-        self.transform: Optional[callable] = transform
-        self.target_column: str = target_column
-        self.device: str = device
+        self.points_csv = points_csv
+        self.indices_csv = indices_csv
+        self.transform = transform
+        self.target_column = target_column
+        self.device = device
+        self.clean_scientific_notation = clean_scientific_notation
 
         # 读取数据
         print("正在读取点云数据...")
-        self.points_df: pd.DataFrame = pd.read_csv(points_csv)
+        self.points_df = pd.read_csv(points_csv)
         print("正在读取索引数据...")
-        self.indices_df: pd.DataFrame = pd.read_csv(indices_csv)
+        self.indices_df = pd.read_csv(indices_csv)
 
-        # 设置molecule_id为索引以便快速查找
+        # 如果需要，清理非标准科学计数法
+        if clean_scientific_notation:
+            print("正在清理非标准科学计数法...")
+            self.points_df = clean_dataframe_scientific_notation(self.points_df)
+            self.indices_df = clean_dataframe_scientific_notation(self.indices_df)
+
+        # 设置索引
         self.indices_df.set_index("molecule_id", inplace=True)
 
         # 获取所有唯一的分子ID
-        self.molecule_ids: List = sorted(self.indices_df.index.unique())
-        self.num_molecules: int = len(self.molecule_ids)
+        self.molecule_ids = sorted(self.indices_df.index.unique())
+        self.num_molecules = len(self.molecule_ids)
 
         # 如果没有指定节点特征，自动推断
         if node_features is None:
-            # 排除非特征列（ID、坐标等）
-            exclude_cols = ["molecule_id", "x", "y", "z"]
+            exclude_cols = ["molecule_id", "atom_index", "x", "y", "z"]
             self.node_features = [
                 col for col in self.points_df.columns if col not in exclude_cols
             ]
@@ -332,8 +436,8 @@ class PointCloudTransform:
 # 使用示例
 if __name__ == "__main__":
     # 数据集路径
-    points_csv = "./data/qm9.csv"
-    indices_csv = "./data/qm9_indices.csv"
+    points_csv = "./qm9.csv"
+    indices_csv = "./qm9_indices.csv"
 
     # 创建变换
     transform = PointCloudTransform(

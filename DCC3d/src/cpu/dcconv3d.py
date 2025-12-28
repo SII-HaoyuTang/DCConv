@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 
-from .aggregation import AggregationLayer
-from .kernel import DCConv3dKernelPolynomials
-from .selector import SelectorConfig, SelectorFactory
-from .transformation import CoordinateTransformer
+from aggregation import AggregationLayer
+from kernel import DCConv3dKernelPolynomials
+from selector import SelectorConfig, SelectorFactory
+from transformation import CoordinateTransformer
 
 
 class DistanceContainedConv3d(nn.Module):

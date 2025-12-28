@@ -49,16 +49,16 @@ def get_dataloader():
     # 创建数据加载器
     train_loader = DataLoader(
         train_dataset,
-        batch_size=128,
+        batch_size=256,
         shuffle=True,
         collate_fn=collater,
-        num_workers=0,
-        pin_memory=False,
+        num_workers=4,
+        pin_memory=True,
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=64,
+        batch_size=256,
         shuffle=False,
         collate_fn=collater,
         num_workers=4,
@@ -86,7 +86,7 @@ def evaluate(model, dataloader, criterion, device):
                 batch["pos"].to(device),
                 batch["x"].to(device),
                 batch["pos_batch"].to(device),
-                batch["y"].to(device),
+                (batch['y']/batch['num_atoms']).to(device),
             )
 
             outputs = model(position_matrix, channel_matrix, belonging)
@@ -102,7 +102,7 @@ def evaluate(model, dataloader, criterion, device):
 
 def train(num_epochs, learning_rate, device):
     # 初始化 wandb
-    # wandb.init(project="DCConv3d_Energy_Prediction")
+    wandb.init(project="DCConv3d_Energy_Prediction")
 
     # 获取数据加载器
     train_loader, val_loader, test_loader = get_dataloader()
@@ -121,7 +121,7 @@ def train(num_epochs, learning_rate, device):
                 batch['pos'].to(device),
                 batch['x'].to(device),
                 batch['pos_batch'].to(device),
-                batch['y'].to(device),
+                (batch['y']/batch['num_atoms']).to(device),
             )
 
             # 确保 target 的形状与 outputs 的形状一致
@@ -146,11 +146,11 @@ def train(num_epochs, learning_rate, device):
         val_loss, val_mae = evaluate(model, val_loader, criterion, device)
 
         # 使用 wandb 记录损失和准确率
-        # wandb.log({
-        #     "Train Loss": avg_train_loss,
-        #     "Validation Loss": val_loss,
-        #     "Validation MAE": val_mae
-        # })
+        wandb.log({
+            "Train Loss": avg_train_loss,
+            "Validation Loss": val_loss,
+            "Validation MAE": val_mae
+        })
 
         # 打印训练和验证损失
         print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Validation Loss: {val_loss:.4f}, Validation MAE: {val_mae:.4f}")
@@ -161,10 +161,10 @@ def train(num_epochs, learning_rate, device):
     # 测试
     test_loss, test_mae = evaluate(model, test_loader, criterion, device)
     print(f"Test Loss: {test_loss:.4f}, Test MAE: {test_mae:.4f}")
-    # wandb.log({
-    #     "Test Loss": test_loss,
-    #     "Test MAE": test_mae
-    # })
+    wandb.log({
+        "Test Loss": test_loss,
+        "Test MAE": test_mae
+    })
 
 if __name__ == "__main__":
     # 设置设备

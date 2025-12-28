@@ -308,7 +308,7 @@ class KNNSelector(BaseSelector):
 
             for group_id in batch_groups:
                 mask = belonging == group_id
-                indices = torch.where(mask)[0]
+                indices = torch.where(mask)[0].to(device)
                 batch_masks.append(mask)
                 batch_indices.append(indices)
 

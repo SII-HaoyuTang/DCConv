@@ -115,7 +115,8 @@ class AssociatedLaguerrePoly:
             signs * (factorial_cache[self.n]) ** 2 / (denom1 * denom2 * denom3)
         )
 
-        return coefficients
+        # [FIX] 翻转系数，使其符合 poly_eval 的降序预期
+        return torch.flip(coefficients, dims=[0])
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -398,7 +399,8 @@ class SphericalHarmonicFunc:
 
         # 使用霍纳法计算多项式部分（包含归一化常数）
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
-        poly_val = _poly_eval_impl(x, coeffs)
+        # [FIX] 翻转系数
+        poly_val = _poly_eval_impl(x, torch.flip(coeffs, dims=[0]))
 
 
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^m
@@ -505,20 +507,23 @@ class SphericalHarmonicFunc:
 
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)
+        # [FIX] 翻转导数系数以匹配 poly_eval 预期
         if len(deriv_coeffs) > 0:
-            poly_deriv_val = _poly_eval_impl(x,deriv_coeffs)
+            poly_deriv_val = _poly_eval_impl(x, torch.flip(deriv_coeffs, dims=[0]))
 
         # \frac{1}{\sin\theta} (|m| Saved - N \cos(m\phi) sin^{|m|+2}\theta Poly')
+        # [FIX] 移除了 self.normalization_parameters (避免双重归一化)
+        # [FIX] 添加了缺失的 * x (即 cos(theta)) 到第一项
         dY_dtheta: torch.Tensor = (
-            self.m_abs * saved
-            - self.normalization_parameters
-            * cos_mphi
+            self.m_abs * saved * x
+            - cos_mphi
             * sin_theta ** (self.m_abs + 2)
             * poly_deriv_val
         ) / sin_theta_judge
 
         # dY/dφ = - \frac{saved}{\cos(m\phi)}\sin(m\phi)
-        dY_dphi: torch.Tensor = -saved * sin_mphi / cos_mphi_judge
+        # [FIX] 添加了缺失的 self.m_abs 因子
+        dY_dphi: torch.Tensor = -self.m_abs * saved * sin_mphi / cos_mphi_judge
 
         return dY_dtheta, dY_dphi
 
@@ -568,16 +573,17 @@ class SphericalHarmonicFunc:
             poly_deriv_val = _poly_eval_impl(x,deriv_coeffs)
 
         # \frac{1}{\sin\theta} (|m| Saved - N \sin(m\phi) sin^{|m|+2}\theta Poly')
+        # [FIX] 同上修复
         dY_dtheta: torch.Tensor = (
-            self.m_abs * saved
-            - self.normalization_parameters
-            * sin_mphi
+            self.m_abs * saved * x
+            - sin_mphi
             * sin_theta ** (self.m_abs + 2)
             * poly_deriv_val
         ) / sin_theta_judge
 
         # dY/dφ = \frac{saved}{\cos(m\phi)}\sin(m\phi)
-        dY_dphi: torch.Tensor = saved * cos_mphi / sin_mphi_judge
+        # [FIX] 同上修复
+        dY_dphi: torch.Tensor = self.m_abs * saved * cos_mphi / sin_mphi_judge
 
         return dY_dtheta, dY_dphi
 
@@ -936,7 +942,8 @@ class HydrogenWaveFunc:
         )
 
         # 计算角向部分
-        angular_part: torch.Tensor = self.spherical_harmonic(phi, theta)
+        # [FIX] 修正参数顺序为 (theta, phi)
+        angular_part: torch.Tensor = self.spherical_harmonic(theta, phi)
 
         # 结合两部分得到波函数
         psi: torch.Tensor = radial_part * angular_part
@@ -985,7 +992,7 @@ class HydrogenWaveFunc:
         # 径向部分  \frac{\partial \exp^{-r/2}*r^l*L}{\partial r} = l*\exp^{-r/2}*r^{l-1}*L - 0.5 * \exp^{-r/2}*r^l*L + \exp^{-r/2}*r^l*L'
         # 将上式中可以被提出的前向部分提出，就得到了实际使用的表达式
         dradial_dr: torch.Tensor = radial_part * (
-            self.k / r - 0.5 + self.associated_laguerre_derivative(r) / laguerre_value
+            self.k / r - 0.5 - self.associated_laguerre_derivative(r) / laguerre_value
         )
 
         # 角向部分

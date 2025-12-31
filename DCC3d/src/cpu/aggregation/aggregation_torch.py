@@ -57,7 +57,15 @@ class AggregationLayer:
         # k: n  (Number of Neighbors)
         # o: Co (Output Channels)
         # sum_over_k( sum_over_c( feat[c,u,k] * weight[o,c,u,k] ) )
-        output = torch.einsum("cuk, ocuk -> ou", features, weights)
+        # sum_over_k( sum_over_c( feat[c,u,k] * weight[o,c,u,k] ) )
+        if features.device.type == "mps":
+            # MPS workaround: Fallback to CPU for einsum to avoid "Placeholder storage" error
+            features_cpu = features.cpu()
+            weights_cpu = weights.cpu()
+            output_cpu = torch.einsum("cuk, ocuk -> ou", features_cpu, weights_cpu)
+            output = output_cpu.to(features.device)
+        else:
+            output = torch.einsum("cuk, ocuk -> ou", features, weights)
 
         return output
 

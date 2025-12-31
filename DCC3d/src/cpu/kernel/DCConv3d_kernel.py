@@ -49,14 +49,18 @@ class DCConv3dKernelPolynomials(nn.Module):
         ]
 
         # Convert to tensors
-        self.n_tensor = torch.tensor(
-            [n for n, _, _ in valid_combinations], dtype=torch.long
+        # Convert to tensors
+        self.register_buffer(
+            "n_tensor",
+            torch.tensor([n for n, _, _ in valid_combinations], dtype=torch.long),
         )
-        self.k_tensor = torch.tensor(
-            [k for _, k, _ in valid_combinations], dtype=torch.long
+        self.register_buffer(
+            "k_tensor",
+            torch.tensor([k for _, k, _ in valid_combinations], dtype=torch.long),
         )
-        self.m_tensor = torch.tensor(
-            [m for _, _, m in valid_combinations], dtype=torch.long
+        self.register_buffer(
+            "m_tensor",
+            torch.tensor([m for _, _, m in valid_combinations], dtype=torch.long),
         )
 
         # self.total_polynomial_nums = N * (K + 1) * min(2 * K + 1, 2 * M + 1)

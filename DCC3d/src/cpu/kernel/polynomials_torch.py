@@ -18,13 +18,7 @@ def _poly_eval_impl(x, coeffs):
 
 
 # 尝试编译，如果失败则使用未编译版本
-if os.environ.get("TORCH_COMPILE_DISABLE", "0") == "1":
-    poly_eval = _poly_eval_impl
-else:
-    try:
-        poly_eval = torch.compile(_poly_eval_impl)
-    except Exception:
-        poly_eval = _poly_eval_impl
+poly_eval = _poly_eval_impl
 
 
 class AssociatedLaguerrePoly:
@@ -145,7 +139,7 @@ class AssociatedLaguerrePoly:
 
         # 确保数据类型匹配
         x: torch.Tensor = x.to(self.dtype)
-        coeffs: torch.Tensor = self.coefficients.to(x.device)
+        coeffs: torch.Tensor = self.coefficients.to(device=x.device, dtype=x.dtype)
 
         # 使用霍纳法（Horner's method）计算多项式
         # 对于多项式 a_n*x^n + ... + a_1*x + a_0
@@ -400,7 +394,9 @@ class SphericalHarmonicFunc:
         x: torch.Tensor = torch.cos(theta)
 
         # 使用霍纳法计算多项式部分（包含归一化常数）
-        coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
+        coeffs: torch.Tensor = self.horner_coeffs.to(
+            device=theta.device, dtype=theta.dtype
+        )
         # [FIX] 翻转系数
         poly_val = _poly_eval_impl(x, coeffs)
 
@@ -422,7 +418,9 @@ class SphericalHarmonicFunc:
         x: torch.Tensor = torch.cos(theta)
 
         # 使用霍纳法计算多项式部分（包含归一化常数）
-        coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
+        coeffs: torch.Tensor = self.horner_coeffs.to(
+            device=theta.device, dtype=theta.dtype
+        )
         poly_val = _poly_eval_impl(x, coeffs)
 
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^{|m|}
@@ -504,7 +502,9 @@ class SphericalHarmonicFunc:
         )
 
         # 提取多项式部分导数
-        deriv_coeffs: torch.Tensor = self.horner_coeffs_derivative.to(theta.device)
+        deriv_coeffs: torch.Tensor = self.horner_coeffs_derivative.to(
+            device=theta.device, dtype=theta.dtype
+        )
 
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)
@@ -566,7 +566,9 @@ class SphericalHarmonicFunc:
         )
 
         # 提取多项式部分导数
-        deriv_coeffs: torch.Tensor = self.horner_coeffs_derivative.to(theta.device)
+        deriv_coeffs: torch.Tensor = self.horner_coeffs_derivative.to(
+            device=theta.device, dtype=theta.dtype
+        )
 
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)

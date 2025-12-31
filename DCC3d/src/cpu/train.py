@@ -1,12 +1,21 @@
+import os
+
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import wandb
 
-from DCC3d.src.cpu.data.dataset import PointCloudCollater, PointCloudQM9Dataset, PointCloudTransform
-from module import DCConvNet
+# import wandb
+from DCC3d.src.cpu.data.dataset import (
+    PointCloudCollater,
+    PointCloudQM9Dataset,
+    PointCloudTransform,
+)
+
+from .module import DCConvNet
+
 
 def get_dataloader():
     # 数据集路径
@@ -53,7 +62,7 @@ def get_dataloader():
         shuffle=True,
         collate_fn=collater,
         num_workers=4,
-        pin_memory=True,
+        pin_memory=False if torch.backends.mps.is_available() else True,
     )
 
     val_loader = DataLoader(
@@ -62,7 +71,7 @@ def get_dataloader():
         shuffle=False,
         collate_fn=collater,
         num_workers=4,
-        pin_memory=True,
+        pin_memory=False if torch.backends.mps.is_available() else True,
     )
 
     test_loader = DataLoader(
@@ -71,10 +80,11 @@ def get_dataloader():
         shuffle=False,
         collate_fn=collater,
         num_workers=4,
-        pin_memory=True,
+        pin_memory=False if torch.backends.mps.is_available() else True,
     )
 
     return train_loader, val_loader, test_loader
+
 
 def evaluate(model, dataloader, criterion, device):
     model.eval()
@@ -86,8 +96,12 @@ def evaluate(model, dataloader, criterion, device):
                 batch["pos"].to(device),
                 batch["x"].to(device),
                 batch["pos_batch"].to(device),
-                (batch['y']/batch['num_atoms']).to(device),
+                (batch["y"] / batch["num_atoms"]).to(device),
             )
+
+            # 确保 target 的形状与 outputs 的形状一致
+            if target.dim() == 1:
+                target = target.unsqueeze(1)
 
             outputs = model(position_matrix, channel_matrix, belonging)
             loss = criterion(outputs, target)
@@ -100,9 +114,10 @@ def evaluate(model, dataloader, criterion, device):
     avg_mae = total_mae / len(dataloader)
     return avg_loss, avg_mae
 
+
 def train(num_epochs, learning_rate, device):
     # 初始化 wandb
-    wandb.init(project="DCConv3d_Energy_Prediction")
+    # wandb.init(project="DCConv3d_Energy_Prediction")
 
     # 获取数据加载器
     train_loader, val_loader, test_loader = get_dataloader()
@@ -116,12 +131,12 @@ def train(num_epochs, learning_rate, device):
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}"):
+        for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}"):
             position_matrix, channel_matrix, belonging, target = (
-                batch['pos'].to(device),
-                batch['x'].to(device),
-                batch['pos_batch'].to(device),
-                (batch['y']/batch['num_atoms']).to(device),
+                batch["pos"].to(device),
+                batch["x"].to(device),
+                batch["pos_batch"].to(device),
+                (batch["y"] / batch["num_atoms"]).to(device),
             )
 
             # 确保 target 的形状与 outputs 的形状一致
@@ -146,14 +161,18 @@ def train(num_epochs, learning_rate, device):
         val_loss, val_mae = evaluate(model, val_loader, criterion, device)
 
         # 使用 wandb 记录损失和准确率
-        wandb.log({
-            "Train Loss": avg_train_loss,
-            "Validation Loss": val_loss,
-            "Validation MAE": val_mae
-        })
+        # wandb.log(
+        #     {
+        #         "Train Loss": avg_train_loss,
+        #         "Validation Loss": val_loss,
+        #         "Validation MAE": val_mae,
+        #     }
+        # )
 
         # 打印训练和验证损失
-        print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Validation Loss: {val_loss:.4f}, Validation MAE: {val_mae:.4f}")
+        print(
+            f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Validation Loss: {val_loss:.4f}, Validation MAE: {val_mae:.4f}"
+        )
 
         # 保存模型检查点
         torch.save(model.state_dict(), "./train_data/checkpoint/checkpoint_epoch.pth")
@@ -161,14 +180,17 @@ def train(num_epochs, learning_rate, device):
     # 测试
     test_loss, test_mae = evaluate(model, test_loader, criterion, device)
     print(f"Test Loss: {test_loss:.4f}, Test MAE: {test_mae:.4f}")
-    wandb.log({
-        "Test Loss": test_loss,
-        "Test MAE": test_mae
-    })
+    # wandb.log({"Test Loss": test_loss, "Test MAE": test_mae})
+
 
 if __name__ == "__main__":
     # 设置设备
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     num_epochs = 50
     learning_rate = 0.001
 

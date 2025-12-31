@@ -33,6 +33,7 @@ def fix_decimal_point(value):
 
     return value
 
+
 def clean_scientific_notation(value):
     """
     更健壮的清理函数，处理各种边缘情况
@@ -52,13 +53,13 @@ def clean_scientific_notation(value):
     # 常见的非标准科学计数法模式
     patterns = [
         # 模式1: 数字E/e^数字（如 -6.E^-6）
-        (r'([+-]?\d*\.?\d*)[Ee]\^([+-]?\d+)', r'\1e\2'),
+        (r"([+-]?\d*\.?\d*)[Ee]\^([+-]?\d+)", r"\1e\2"),
         # 模式2: 数字E/e^+数字（如 1.23E^+4）
-        (r'([+-]?\d*\.?\d*)[Ee]\^\+(\d+)', r'\1e+\2'),
+        (r"([+-]?\d*\.?\d*)[Ee]\^\+(\d+)", r"\1e+\2"),
         # 模式3: 数字E/e^-数字（如 5.67e^-3）
-        (r'([+-]?\d*\.?\d*)[Ee]\^-(\d+)', r'\1e-\2'),
+        (r"([+-]?\d*\.?\d*)[Ee]\^-(\d+)", r"\1e-\2"),
         # 模式4: 数字E/e数字（没有^，但可能有问题）
-        (r'([+-]?\d*\.?\d*)[Ee](\d+)', r'\1e\2'),
+        (r"([+-]?\d*\.?\d*)[Ee](\d+)", r"\1e\2"),
     ]
 
     original = str_value
@@ -70,8 +71,8 @@ def clean_scientific_notation(value):
             return cleaned
 
     # 如果正则表达式没有匹配，尝试简单替换
-    if '^' in str_value:
-        cleaned = str_value.replace('^', '')
+    if "^" in str_value:
+        cleaned = str_value.replace("^", "")
         cleaned = fix_decimal_point(cleaned)
         return cleaned
 
@@ -138,14 +139,16 @@ class PointCloudQM9Dataset(Dataset):
             获取分子的SMILES表示（如果有）。
     """
 
-    def __init__(self,
-                 points_csv: str,
-                 indices_csv: str,
-                 transform: Optional[callable] = None,
-                 target_column: str = 'energy',
-                 node_features: List[str] = None,
-                 clean_scientific_notation: bool = True,
-                 device: str = 'cpu'):
+    def __init__(
+        self,
+        points_csv: str,
+        indices_csv: str,
+        transform: Optional[callable] = None,
+        target_column: str = "energy",
+        node_features: List[str] = None,
+        clean_scientific_notation: bool = True,
+        device: str = "cpu",
+    ):
         """
         Initializes a dataset for molecular data, loading points and indices from CSV files.
 
@@ -182,9 +185,9 @@ class PointCloudQM9Dataset(Dataset):
 
         # 读取数据
         print("正在读取点云数据...")
-        self.points_df = pd.read_csv(points_csv)
+        self.points_df = pd.read_csv(points_csv, low_memory=False)
         print("正在读取索引数据...")
-        self.indices_df = pd.read_csv(indices_csv)
+        self.indices_df = pd.read_csv(indices_csv, low_memory=False)
 
         # 如果需要，清理非标准科学计数法
         if clean_scientific_notation:

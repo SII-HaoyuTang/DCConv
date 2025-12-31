@@ -109,7 +109,9 @@ class DistanceContainedConv3d(nn.Module):
 
         # 按照空间数目生成线性间隔的张量,之后重复每个值空间中点数次，最后生成归属向量belonging
         space_num = int(position_matrix.shape[0] / space_points_num)
-        linspace_tensor = torch.linspace(1, space_num, space_num)
+        linspace_tensor = torch.linspace(
+            1, space_num, space_num, device=position_matrix.device
+        )
         belonging = linspace_tensor.repeat_interleave(space_points_num)
 
         neighbor_indices = self.selector(
@@ -157,7 +159,11 @@ class DistanceContainedConv3d(nn.Module):
 
             # Step 3': 残差核权重生成 (Resnet Kernel Weight Generation)
             resnet_kernel_weights = torch.ones(
-                self.out_channels, self.in_channels, outpoint_num * space_num, conv_num
+                self.out_channels,
+                self.in_channels,
+                outpoint_num * space_num,
+                conv_num,
+                device=resnet_channel.device,
             )  # Shape: (Co, Ci, outpoint_num, k)
 
             # Step 4‘: 特征聚合 (Feature Aggregation)

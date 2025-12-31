@@ -72,6 +72,9 @@ class CoordinateTransformerTorch(nn.Module):
         self.center_method = center_method
         self.use_pca = use_pca
         self.use_compile = use_compile and TORCH_COMPILE_AVAILABLE
+        # Disable compile on MPS as it causes NotImplementedError for linalg_eigh and recompilation issues
+        if torch.backends.mps.is_available():
+            self.use_compile = False
 
         if center_method == "median":
             print("警告: median 不可微分，将在需要梯度时使用 mean")
@@ -88,8 +91,9 @@ class CoordinateTransformerTorch(nn.Module):
         if self.use_compile:
             # 尝试使用 torch.compile，如果失败则回退
             import os
+
             # 允许通过环境变量禁用编译（用于没有 C++ 编译器的环境）
-            if os.environ.get('TORCH_COMPILE_DISABLE', '0') == '1':
+            if os.environ.get("TORCH_COMPILE_DISABLE", "0") == "1":
                 self._apply_pca_batch = self._apply_pca_batch_impl
                 print("⚠ torch.compile 已通过环境变量禁用")
             else:
@@ -271,7 +275,14 @@ class CoordinateTransformerTorch(nn.Module):
         ).unsqueeze(0)
 
         # 3. 批量特征值分解
-        eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrices)
+        if device.type == "mps":
+            # MPS temporarily does not support linalg_eigh, use CPU fallback
+            cov_matrices_cpu = cov_matrices.cpu()
+            eigenvalues_cpu, eigenvectors_cpu = torch.linalg.eigh(cov_matrices_cpu)
+            eigenvalues = eigenvalues_cpu.to(device)
+            eigenvectors = eigenvectors_cpu.to(device)
+        else:
+            eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrices)
 
         # 4. 批量投影
         aligned_coords = torch.bmm(relative_coords, eigenvectors)

@@ -1,5 +1,6 @@
 import math
 import os
+from cmath import phase
 from collections.abc import Callable
 from typing import Dict, Tuple, Type
 
@@ -115,7 +116,7 @@ class AssociatedLaguerrePoly:
             signs * (factorial_cache[self.n]) ** 2 / (denom1 * denom2 * denom3)
         )
 
-        return coefficients
+        return torch.flip(coefficients, dims=[0])
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -170,7 +171,7 @@ class SphericalHarmonicFunc:
         k: int,
         m: int,
         dtype: torch.dtype = torch.float32,
-        normalization: str = "spherical",
+        normalization: str = "schmidt",
     ):
         """
         初始化球谐函数
@@ -277,7 +278,7 @@ class SphericalHarmonicFunc:
             return self._compute_standard_legendre_coeffs(k)
 
         # 计算标准勒让德多项式系数
-        legendre_coeffs: torch.Tensor = self._compute_standard_legendre_coeffs(k)
+        legendre_coeffs: torch.Tensor = torch.flip(self._compute_standard_legendre_coeffs(k),dims=[0])
 
         # 对多项式系数求 m_abs 阶导数
         coeffs: torch.Tensor = legendre_coeffs.clone()
@@ -292,7 +293,7 @@ class SphericalHarmonicFunc:
         # 注意：连带勒让德函数 P_l^m(x) 包含因子 (1-x^2)^{m/2}
         # 这个因子将在 __call__ 中单独处理
 
-        return coeffs
+        return torch.flip(coeffs,dims=[0])
 
     def _compute_standard_legendre_coeffs(self, k: int) -> torch.Tensor:
         """
@@ -324,7 +325,7 @@ class SphericalHarmonicFunc:
             coeffs[power] = coeff
 
         coeffs /= 2**k
-        return coeffs
+        return torch.flip(coeffs,dims=[0])
 
     def _compute_polynomial_derivative_coeffs(self) -> torch.Tensor:
         """
@@ -339,7 +340,7 @@ class SphericalHarmonicFunc:
         Returns:
             torch.Tensor: Coefficients of the derivative polynomial.
         """
-        coeffs: torch.Tensor = self.horner_coeffs
+        coeffs: torch.Tensor = torch.flip(self.horner_coeffs, dims=[0])
 
         if len(coeffs) <= 1:
             return torch.zeros(0, dtype=coeffs.dtype)
@@ -349,7 +350,7 @@ class SphericalHarmonicFunc:
         for n in range(1, len(coeffs)):
             deriv_coeffs[n - 1] = n * coeffs[n]
 
-        return deriv_coeffs
+        return torch.flip(deriv_coeffs, dims=[0])
 
     def __call__(self, theta: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
         """
@@ -400,7 +401,8 @@ class SphericalHarmonicFunc:
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
         poly_val = _poly_eval_impl(x, coeffs)
 
-        # 乘以 (1-x^2)^{|m|/2} = (sinθ)^m
+
+        # 乘以 (1-x^2)^{|m|/2} = (sinθ)^|m|
         if self.m_abs > 0:
             sin_theta: torch.Tensor = torch.sin(theta)
             # 确保非负（处理数值误差）
@@ -431,7 +433,7 @@ class SphericalHarmonicFunc:
             factor: torch.Tensor = torch.pow(sin_theta, self.m_abs)
             poly_val = poly_val * factor
 
-        # 乘以方位角部分 \cos^{mφ}
+        # 乘以方位角部分 sin(|m|φ)
         azimuth: torch.Tensor = torch.sin(self.m_abs * phi)
         result: torch.Tensor = poly_val * azimuth
 
@@ -448,13 +450,13 @@ class SphericalHarmonicFunc:
             \frac{dP_l^m}{d\cos\theta} = \frac{\partial}{\partial x} (1-x^2)^{|m|/2} Poly(x)
                                        = -|m|(1-x^2)^{|m|/2-1} x Poly(x) + (1-x^2)^{|m|/2}Poly'(x)
         其中 Poly代表多项式部分的值，由于 x=\cos(\theta)，所以有：
-            \frac{dY}{d\theta} = -N\cos(m\phi)\sin(\theta)[-|m|\sin^{|m|-2}(\theta) x Poly + \sin^{|m|}\theta Poly']
-                               = \sin^{|m|-1}(\theta) N \cos(m\phi)(|m|Poly - \sin^2\theta Poly')
-                               = \frac{1}{\sin\theta} (\sin^{|m|}\theta N cos(m\phi) Poly|m| - N\cos(m\phi)sin^{\m\+2}\theta Poly')
-                               = \frac{1}{\sin\theta} (|m| Saved - N \cos(m\phi) sin^{|m|+2}\theta Poly')
-        最后一步是由于前向计算中已经保存的数据 Saved = N \cos(m\phi) sin^{|m|} \theta Poly =N \cos(m\phi) P(cos\theta)
+            \frac{dY}{d\theta} = -N\cos(m\phi)\sin(\theta)[-|m|\sin^{|m|-2}(\theta) \cos(\theta) Poly + \sin^{|m|}\theta Poly']
+                               = \sin^{|m|-1}(\theta) N \cos(m\phi)(|m| \cos(\theta) Poly - \sin^2\theta Poly')
+                               = \frac{1}{\sin\theta} (\cos(\theta) \sin^{|m|}\theta N \cos(|m|\phi) Poly|m| - N\cos(m\phi)sin^{\m\+2}\theta Poly')
+                               = \frac{1}{\sin\theta} (\cos(\theta) |m| Saved - N \cos(|m|\phi) sin^{|m|+2}\theta Poly')
+        最后一步是由于前向计算中已经保存的数据 Saved = N \cos(|m|\phi) sin^{|m|} \theta Poly =N \cos(|m|\phi) P(cos\theta)
         对于\phi，有：
-        \frac{\partial Y}{\partial \phi} = - N \sin(m \phi) P(\cos\theta) = - \frac{saved}{\sin(m\phi)} / \cos(m\phi)
+        \frac{\partial Y}{\partial \phi} = - N |m| \sin(|m| \phi) P(\cos\theta) = - |m| \frac{saved}{\sin(m\phi)} / \cos(|m| \phi)
 
         Returns:
         --------
@@ -507,17 +509,17 @@ class SphericalHarmonicFunc:
         if len(deriv_coeffs) > 0:
             poly_deriv_val = _poly_eval_impl(x, deriv_coeffs)
 
-        # \frac{1}{\sin\theta} (|m| Saved - N \cos(m\phi) sin^{|m|+2}\theta Poly')
+        # \frac{1}{\sin\theta} (\cos(\theta) |m| Saved - N \cos(|m|\phi) sin^{|m|+2}\theta Poly')
+        # 归一化常数已经包含在了系数之中
         dY_dtheta: torch.Tensor = (
-            self.m_abs * saved
-            - self.normalization_parameters
-            * cos_mphi
+             x * self.m_abs * saved
+            - cos_mphi
             * sin_theta ** (self.m_abs + 2)
             * poly_deriv_val
         ) / sin_theta_judge
 
         # dY/dφ = - \frac{saved}{\cos(m\phi)}\sin(m\phi)
-        dY_dphi: torch.Tensor = -saved * sin_mphi / cos_mphi_judge
+        dY_dphi: torch.Tensor = - self.m_abs * saved * sin_mphi / cos_mphi_judge
 
         return dY_dtheta, dY_dphi
 
@@ -566,17 +568,17 @@ class SphericalHarmonicFunc:
         if len(deriv_coeffs) > 0:
             poly_deriv_val = _poly_eval_impl(x, deriv_coeffs)
 
-        # \frac{1}{\sin\theta} (|m| Saved - N \sin(m\phi) sin^{|m|+2}\theta Poly')
+        # \frac{1}{\sin\theta} (\cos(\theta) |m| Saved - N \sin(m\phi) sin^{|m|+2}\theta Poly')
+        # 归一化常数已经包含在了系数之中
         dY_dtheta: torch.Tensor = (
-            self.m_abs * saved
-            - self.normalization_parameters
-            * sin_mphi
+            x * self.m_abs * saved
+            - sin_mphi
             * sin_theta ** (self.m_abs + 2)
             * poly_deriv_val
         ) / sin_theta_judge
 
-        # dY/dφ = \frac{saved}{\cos(m\phi)}\sin(m\phi)
-        dY_dphi: torch.Tensor = saved * cos_mphi / sin_mphi_judge
+        # dY/dφ = |m| \frac{saved}{\sin(|m| \phi)}\cos(|m| \phi)
+        dY_dphi: torch.Tensor = self.m_abs * saved * cos_mphi / sin_mphi_judge
 
         return dY_dtheta, dY_dphi
 
@@ -935,7 +937,7 @@ class HydrogenWaveFunc:
         )
 
         # 计算角向部分
-        angular_part: torch.Tensor = self.spherical_harmonic(phi, theta)
+        angular_part: torch.Tensor = self.spherical_harmonic(theta, phi)
 
         # 结合两部分得到波函数
         psi: torch.Tensor = radial_part * angular_part
@@ -984,7 +986,7 @@ class HydrogenWaveFunc:
         # 径向部分  \frac{\partial \exp^{-r/2}*r^l*L}{\partial r} = l*\exp^{-r/2}*r^{l-1}*L - 0.5 * \exp^{-r/2}*r^l*L + \exp^{-r/2}*r^l*L'
         # 将上式中可以被提出的前向部分提出，就得到了实际使用的表达式
         dradial_dr: torch.Tensor = radial_part * (
-            self.k / r - 0.5 + self.associated_laguerre_derivative(r) / laguerre_value
+            self.k / r - 0.5 - self.associated_laguerre_derivative(r) / laguerre_value
         )
 
         # 角向部分

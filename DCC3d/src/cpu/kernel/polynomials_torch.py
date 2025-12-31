@@ -278,7 +278,9 @@ class SphericalHarmonicFunc:
             return self._compute_standard_legendre_coeffs(k)
 
         # 计算标准勒让德多项式系数
-        legendre_coeffs: torch.Tensor = torch.flip(self._compute_standard_legendre_coeffs(k),dims=[0])
+        legendre_coeffs: torch.Tensor = torch.flip(
+            self._compute_standard_legendre_coeffs(k), dims=[0]
+        )
 
         # 对多项式系数求 m_abs 阶导数
         coeffs: torch.Tensor = legendre_coeffs.clone()
@@ -293,7 +295,7 @@ class SphericalHarmonicFunc:
         # 注意：连带勒让德函数 P_l^m(x) 包含因子 (1-x^2)^{m/2}
         # 这个因子将在 __call__ 中单独处理
 
-        return torch.flip(coeffs,dims=[0])
+        return torch.flip(coeffs, dims=[0])
 
     def _compute_standard_legendre_coeffs(self, k: int) -> torch.Tensor:
         """
@@ -325,7 +327,7 @@ class SphericalHarmonicFunc:
             coeffs[power] = coeff
 
         coeffs /= 2**k
-        return torch.flip(coeffs,dims=[0])
+        return torch.flip(coeffs, dims=[0])
 
     def _compute_polynomial_derivative_coeffs(self) -> torch.Tensor:
         """
@@ -400,14 +402,11 @@ class SphericalHarmonicFunc:
         # 使用霍纳法计算多项式部分（包含归一化常数）
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
         # [FIX] 翻转系数
-        poly_val = _poly_eval_impl(x, torch.flip(coeffs, dims=[0]))
-
+        poly_val = _poly_eval_impl(x, coeffs)
 
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^|m|
         if self.m_abs > 0:
             sin_theta: torch.Tensor = torch.sin(theta)
-            # 确保非负（处理数值误差）
-            sin_theta = torch.clamp(sin_theta, min=0.0)
             factor: torch.Tensor = torch.pow(sin_theta, self.m_abs)
             poly_val = poly_val * factor
 
@@ -429,8 +428,6 @@ class SphericalHarmonicFunc:
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^{|m|}
         if self.m_abs > 0:
             sin_theta: torch.Tensor = torch.sin(theta)
-            # 确保非负（处理数值误差）
-            sin_theta = torch.clamp(sin_theta, min=0.0)
             factor: torch.Tensor = torch.pow(sin_theta, self.m_abs)
             poly_val = poly_val * factor
 
@@ -492,14 +489,18 @@ class SphericalHarmonicFunc:
         sin_theta: torch.Tensor = torch.sin(theta)
         # 处理sin(\theta)=0的情况，在这种情况下正向计算的值本身为零，故导数为0
         sin_theta_judge: torch.Tensor = torch.where(
-            sin_theta < 10e-4, torch.inf, sin_theta
+            torch.abs(sin_theta) < 1e-10,
+            torch.tensor(1e-10, device=sin_theta.device, dtype=sin_theta.dtype),
+            sin_theta,
         )
         mphi: torch.Tensor = self.m_abs * phi
         sin_mphi: torch.Tensor = torch.sin(mphi)
         cos_mphi: torch.Tensor = torch.cos(mphi)
         # 同上
         cos_mphi_judge: torch.Tensor = torch.where(
-            torch.logical_and(-10e-5 < cos_mphi, cos_mphi < 10e-5), torch.inf, cos_mphi
+            torch.abs(cos_mphi) < 1e-10,
+            torch.tensor(1e-10, device=cos_mphi.device, dtype=cos_mphi.dtype),
+            cos_mphi,
         )
 
         # 提取多项式部分导数
@@ -514,14 +515,12 @@ class SphericalHarmonicFunc:
         # \frac{1}{\sin\theta} (\cos(\theta) |m| Saved - N \cos(|m|\phi) sin^{|m|+2}\theta Poly')
         # 归一化常数已经包含在了系数之中
         dY_dtheta: torch.Tensor = (
-             x * self.m_abs * saved
-            - cos_mphi
-            * sin_theta ** (self.m_abs + 2)
-            * poly_deriv_val
+            x * self.m_abs * saved
+            - cos_mphi * sin_theta ** (self.m_abs + 2) * poly_deriv_val
         ) / sin_theta_judge
 
         # dY/dφ = - \frac{saved}{\cos(m\phi)}\sin(m\phi)
-        dY_dphi: torch.Tensor = - self.m_abs * saved * sin_mphi / cos_mphi_judge
+        dY_dphi: torch.Tensor = -self.m_abs * saved * sin_mphi / cos_mphi_judge
 
         return dY_dtheta, dY_dphi
 
@@ -552,14 +551,18 @@ class SphericalHarmonicFunc:
         sin_theta: torch.Tensor = torch.sin(theta)
         # 处理sin(\theta)=0的情况，在这种情况下正向计算的值本身为零，故导数为0  # noqa: F821
         sin_theta_judge: torch.Tensor = torch.where(
-            sin_theta < 10e-4, torch.inf, sin_theta
+            torch.abs(sin_theta) < 1e-10,
+            torch.tensor(1e-10, device=sin_theta.device, dtype=sin_theta.dtype),
+            sin_theta,
         )
         mphi: torch.Tensor = self.m_abs * phi
-        cos_mphi: torch.Tensor = torch.sin(mphi)
-        sin_mphi: torch.Tensor = torch.cos(mphi)
+        cos_mphi: torch.Tensor = torch.cos(mphi)
+        sin_mphi: torch.Tensor = torch.sin(mphi)
         # 同上
         sin_mphi_judge: torch.Tensor = torch.where(
-            torch.logical_and(-10e-5 < sin_mphi, sin_mphi < 10e-5), torch.inf, sin_mphi
+            torch.abs(sin_mphi) < 1e-10,
+            torch.tensor(1e-10, device=sin_mphi.device, dtype=sin_mphi.dtype),
+            sin_mphi,
         )
 
         # 提取多项式部分导数
@@ -574,9 +577,7 @@ class SphericalHarmonicFunc:
         # 归一化常数已经包含在了系数之中
         dY_dtheta: torch.Tensor = (
             x * self.m_abs * saved
-            - sin_mphi
-            * sin_theta ** (self.m_abs + 2)
-            * poly_deriv_val
+            - sin_mphi * sin_theta ** (self.m_abs + 2) * poly_deriv_val
         ) / sin_theta_judge
 
         # dY/dφ = |m| \frac{saved}{\sin(|m| \phi)}\cos(|m| \phi)

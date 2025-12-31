@@ -1,26 +1,30 @@
-import sys
 import os
+import sys
+
 import torch
+import torch._dynamo
 import torch.nn as nn
 from torch.autograd import gradcheck
-import torch._dynamo
 
 torch._dynamo.config.suppress_errors = True
 torch._dynamo.config.disable = True
 
 sys.path.append(os.path.abspath("src"))
 
-from src.cpu.kernel import polynomials_torch
-from src.cpu.kernel.polynomials_torch import (
+from DCC3d.src.cpu.kernel import polynomials_torch
+from DCC3d.src.cpu.kernel.polynomials_torch import (
     AssociatedLaguerrePoly,
-    SphericalHarmonicFunc,
+    HydrogenWaveFuncsSeries,
     HydrogenWaveFunctionRegistry,
-    HydrogenWaveFuncsSeries
+    SphericalHarmonicFunc,
 )
 
 print("Monkey patching hydrogen_wave_funcs_series to use float64...")
-polynomials_torch.hydrogen_wave_funcs_series = HydrogenWaveFuncsSeries(dtype=torch.float64)
+polynomials_torch.hydrogen_wave_funcs_series = HydrogenWaveFuncsSeries(
+    dtype=torch.float64
+)
 HydrogenWaveFunctionRegistry._function_cache = {}
+
 
 def run_test(name, func, inputs, eps=1e-3, atol=1e-2):
     """
@@ -33,7 +37,9 @@ def run_test(name, func, inputs, eps=1e-3, atol=1e-2):
     except Exception as e:
         print("❌ FAILED")
         import traceback
+
         traceback.print_exc()
+
 
 def test_laguerre():
     """
@@ -46,6 +52,7 @@ def test_laguerre():
     x = torch.rand(5, 3, dtype=torch.float64, requires_grad=True) + 0.1
     run_test("Laguerre", lambda x: poly(x), (x,))
 
+
 def test_spherical_harmonics():
     """
     测试球谐函数部分的梯度计算。
@@ -54,11 +61,14 @@ def test_spherical_harmonics():
     print("\n--- Test 2: Spherical Harmonics (Angular) ---")
     k, m = 3, 1
     sh_func = SphericalHarmonicFunc(k, m, dtype=torch.float64)
-    theta = torch.rand(4, 2, dtype=torch.float64, requires_grad=True) * 3.0 + 0.1 
+    theta = torch.rand(4, 2, dtype=torch.float64, requires_grad=True) * 3.0 + 0.1
     phi = torch.rand(4, 2, dtype=torch.float64, requires_grad=True) * 6.0
-    
-    def func_wrapper(t, p): return sh_func(t, p)
+
+    def func_wrapper(t, p):
+        return sh_func(t, p)
+
     run_test(f"Spherical Harmonic", func_wrapper, (theta, phi))
+
 
 def test_hydrogen_wave_full():
     """
@@ -67,17 +77,20 @@ def test_hydrogen_wave_full():
     """
     print("\n--- Test 3: Hydrogen Wave Function (Full Model) ---")
     n, l, m = 3, 2, 1
-    HWFR = HydrogenWaveFunctionRegistry(n+1, l+1, m+1)
+    HWFR = HydrogenWaveFunctionRegistry(n + 1, l + 1, m + 1)
     HydrogenFuncClass = HWFR.get_function(n, l, m)
-    
+
     r = torch.rand(2, 3, 1, dtype=torch.float32) + 0.5
     theta = torch.rand(2, 3, 1, dtype=torch.float32) * 3.0 + 0.1
     phi = torch.rand(2, 3, 1, dtype=torch.float32) * 6.0
     position = torch.cat([r, theta, phi], dim=-1).detach()
     position.requires_grad = True
-    
-    def forward_wrapper(pos): return HydrogenFuncClass.apply(pos)
+
+    def forward_wrapper(pos):
+        return HydrogenFuncClass.apply(pos)
+
     run_test(f"HydrogenWaveFunc", forward_wrapper, (position,))
+
 
 def test_laguerre_derivative_relation():
     """
@@ -87,19 +100,20 @@ def test_laguerre_derivative_relation():
     print("\n--- Test 4: Debugging Derivative Assumption ---")
     n, k = 4, 2
     N, K = n + k, 2 * k + 1
-    
+
     poly = AssociatedLaguerrePoly(N, K, dtype=torch.float64)
     poly_deriv_expected = AssociatedLaguerrePoly(N, K + 1, dtype=torch.float64)
-    
+
     x = torch.rand(5, 1, dtype=torch.float64, requires_grad=True) + 0.1
     y = poly(x)
     dydx = torch.autograd.grad(y.sum(), x, create_graph=True)[0]
     y_deriv_pred = -poly_deriv_expected(x)
-    
+
     mae = torch.mean(torch.abs(dydx - y_deriv_pred)).item()
     print(f"Difference betwen True Grad and Assumed Grad: {mae:.6e}")
     if mae > 1e-5:
         print("Assumption Wrong: The manual derivative implementation is incorrect.")
+
 
 def test_hydrogen_coverage():
     """
@@ -108,24 +122,26 @@ def test_hydrogen_coverage():
     """
     print("\n--- Test 5: Coverage Check (Negative m and Zero m) ---")
     test_cases = [(3, 1, 0), (3, 2, -1), (3, 2, -2)]
-    
+
     for n, l, m in test_cases:
         print(f"  Testing n={n}, l={l}, m={m} ...", end=" ")
         try:
-            HWFR = HydrogenWaveFunctionRegistry(n+1, l+1, abs(m)+1)
+            HWFR = HydrogenWaveFunctionRegistry(n + 1, l + 1, abs(m) + 1)
             HydrogenFuncClass = HWFR.get_function(n, l, m)
-            
-            position = torch.randn(2, 3, 3, dtype=torch.float64) 
-            position = position + 0.5 
+
+            position = torch.randn(2, 3, 3, dtype=torch.float64)
+            position = position + 0.5
             position.requires_grad = True
-            
-            def forward_wrapper(pos): return HydrogenFuncClass.apply(pos)
-            
+
+            def forward_wrapper(pos):
+                return HydrogenFuncClass.apply(pos)
+
             gradcheck(forward_wrapper, (position,), eps=1e-4, atol=1e-3)
             print("✅ PASSED")
         except Exception as e:
             print(f"❌ FAILED")
-        
+
+
 if __name__ == "__main__":
     print("Starting Gradient Checks...")
     torch.manual_seed(42)

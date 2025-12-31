@@ -97,35 +97,51 @@ def test_forward_pass_basic():
         N=N,
         L=L,
         M=M,
+        conv_num=8,
+        use_resnet=False,
         use_PCA=True,
     )
 
     # Forward pass - test with different n_select values
     try:
         # Test 1: No n_select (use all points)
-        centers, output = model(positions, features)
+        centers, output = model(
+            positions, features, positions.shape[0], positions.shape[0]
+        )
         expected_shape = (n_points, out_channels)
         expected_centers_shape = (n_points, 3)
 
         if output.shape == expected_shape and centers.shape == expected_centers_shape:
-            print(f"✅ Forward pass (all points): output {output.shape}, centers {centers.shape}")
+            print(
+                f"✅ Forward pass (all points): output {output.shape}, centers {centers.shape}"
+            )
         else:
-            print(f"❌ Shape mismatch (all points): Got output {output.shape}, centers {centers.shape}")
-            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
+            print(
+                f"❌ Shape mismatch (all points): Got output {output.shape}, centers {centers.shape}"
+            )
+            print(
+                f"    Expected output {expected_shape}, centers {expected_centers_shape}"
+            )
             return False
 
         # Test 2: With n_select
         n_select = 30
-        centers, output = model(positions, features, n_select=n_select)
+        centers, output = model(positions, features, positions.shape[0], n_select)
         expected_shape = (n_select, out_channels)
         expected_centers_shape = (n_select, 3)
 
         if output.shape == expected_shape and centers.shape == expected_centers_shape:
-            print(f"✅ Forward pass (n_select={n_select}): output {output.shape}, centers {centers.shape}")
+            print(
+                f"✅ Forward pass (n_select={n_select}): output {output.shape}, centers {centers.shape}"
+            )
             return True
         else:
-            print(f"❌ Shape mismatch (n_select={n_select}): Got output {output.shape}, centers {centers.shape}")
-            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
+            print(
+                f"❌ Shape mismatch (n_select={n_select}): Got output {output.shape}, centers {centers.shape}"
+            )
+            print(
+                f"    Expected output {expected_shape}, centers {expected_centers_shape}"
+            )
             return False
 
     except Exception as e:
@@ -162,16 +178,23 @@ def test_different_input_sizes():
             N=N,
             L=L,
             M=M,
+            conv_num=16,
+            use_resnet=False,
             use_PCA=True,
         )
 
         try:
             # Test with all points
-            centers, output = model(positions, features)
+            centers, output = model(
+                positions, features, positions.shape[0], positions.shape[0]
+            )
             expected_shape = (n_points, out_channels)
             expected_centers_shape = (n_points, 3)
 
-            if output.shape == expected_shape and centers.shape == expected_centers_shape:
+            if (
+                output.shape == expected_shape
+                and centers.shape == expected_centers_shape
+            ):
                 print(
                     f"  ✅ Size {n_points}x{in_channels}->{out_channels}: output {output.shape}, centers {centers.shape}"
                 )
@@ -179,16 +202,21 @@ def test_different_input_sizes():
                 print(
                     f"  ❌ Shape mismatch: Got output {output.shape}, centers {centers.shape}"
                 )
-                print(f"      Expected output {expected_shape}, centers {expected_centers_shape}")
+                print(
+                    f"      Expected output {expected_shape}, centers {expected_centers_shape}"
+                )
                 return False
 
             # Test with n_select (use half the points)
             n_select = max(1, n_points // 2)
-            centers, output = model(positions, features, n_select=n_select)
+            centers, output = model(positions, features, positions.shape[0], n_select)
             expected_shape = (n_select, out_channels)
             expected_centers_shape = (n_select, 3)
 
-            if output.shape == expected_shape and centers.shape == expected_centers_shape:
+            if (
+                output.shape == expected_shape
+                and centers.shape == expected_centers_shape
+            ):
                 print(
                     f"  ✅ Size with n_select={n_select}: output {output.shape}, centers {centers.shape}"
                 )
@@ -196,7 +224,9 @@ def test_different_input_sizes():
                 print(
                     f"  ❌ n_select shape mismatch: Got output {output.shape}, centers {centers.shape}"
                 )
-                print(f"      Expected output {expected_shape}, centers {expected_centers_shape}")
+                print(
+                    f"      Expected output {expected_shape}, centers {expected_centers_shape}"
+                )
                 return False
 
         except Exception as e:
@@ -230,13 +260,15 @@ def test_gradient_flow():
         N=N,
         L=L,
         M=M,
+        conv_num=8,
+        use_resnet=False,
         use_PCA=True,
     )
 
     try:
         # Forward pass with n_select
         n_select = 20
-        centers, output = model(positions, features, n_select=n_select)
+        centers, output = model(positions, features, positions.shape[0], n_select)
 
         # Create a dummy loss (sum of all outputs)
         loss = output.sum()
@@ -299,6 +331,8 @@ def test_pca_vs_no_pca():
         N=N,
         L=L,
         M=M,
+        conv_num=16,
+        use_resnet=False,
         use_PCA=True,
     )
 
@@ -310,23 +344,35 @@ def test_pca_vs_no_pca():
         N=N,
         L=L,
         M=M,
+        conv_num=16,
+        use_resnet=False,
         use_PCA=False,
     )
 
     try:
-        centers_pca, output_pca = model_pca(positions, features, n_select=n_select)
-        centers_no_pca, output_no_pca = model_no_pca(positions, features, n_select=n_select)
+        centers_pca, output_pca = model_pca(
+            positions, features, positions.shape[0], n_select
+        )
+        centers_no_pca, output_no_pca = model_no_pca(
+            positions, features, positions.shape[0], n_select
+        )
 
         expected_shape = (n_select, out_channels)
         expected_centers_shape = (n_select, 3)
 
-        pca_shapes_ok = (output_pca.shape == expected_shape and
-                        centers_pca.shape == expected_centers_shape)
-        no_pca_shapes_ok = (output_no_pca.shape == expected_shape and
-                           centers_no_pca.shape == expected_centers_shape)
+        pca_shapes_ok = (
+            output_pca.shape == expected_shape
+            and centers_pca.shape == expected_centers_shape
+        )
+        no_pca_shapes_ok = (
+            output_no_pca.shape == expected_shape
+            and centers_no_pca.shape == expected_centers_shape
+        )
 
         if pca_shapes_ok and no_pca_shapes_ok:
-            print(f"✅ Both PCA modes work correctly: output {expected_shape}, centers {expected_centers_shape}")
+            print(
+                f"✅ Both PCA modes work correctly: output {expected_shape}, centers {expected_centers_shape}"
+            )
             print(f"  PCA output norm: {output_pca.norm():.6f}")
             print(f"  No-PCA output norm: {output_no_pca.norm():.6f}")
             print(f"  PCA centers norm: {centers_pca.norm():.6f}")
@@ -335,13 +381,18 @@ def test_pca_vs_no_pca():
         else:
             print("❌ Shape issues:")
             print(f"  PCA: output {output_pca.shape}, centers {centers_pca.shape}")
-            print(f"  No-PCA: output {output_no_pca.shape}, centers {centers_no_pca.shape}")
-            print(f"  Expected: output {expected_shape}, centers {expected_centers_shape}")
+            print(
+                f"  No-PCA: output {output_no_pca.shape}, centers {centers_no_pca.shape}"
+            )
+            print(
+                f"  Expected: output {expected_shape}, centers {expected_centers_shape}"
+            )
             return False
 
     except Exception as e:
         print(f"❌ PCA comparison failed with error: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -365,17 +416,21 @@ def test_structured_data():
         N=N,
         L=L,
         M=M,
+        conv_num=8,
+        use_resnet=False,
         use_PCA=True,
     )
 
     try:
-        centers, output = model(positions, features, n_select=n_select)
+        centers, output = model(positions, features, positions.shape[0], n_select)
         n_points = grid_size**3
         expected_shape = (n_select, out_channels)
         expected_centers_shape = (n_select, 3)
 
         if output.shape == expected_shape and centers.shape == expected_centers_shape:
-            print(f"✅ Structured data test passed: output {output.shape}, centers {centers.shape}")
+            print(
+                f"✅ Structured data test passed: output {output.shape}, centers {centers.shape}"
+            )
             print(
                 f"  Grid size: {grid_size}x{grid_size}x{grid_size} = {n_points} points -> {n_select} selected"
             )
@@ -389,12 +444,15 @@ def test_structured_data():
         else:
             print(f"❌ Shape mismatch:")
             print(f"    Got output {output.shape}, centers {centers.shape}")
-            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
+            print(
+                f"    Expected output {expected_shape}, centers {expected_centers_shape}"
+            )
             return False
 
     except Exception as e:
         print(f"❌ Structured data test failed with error: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -419,21 +477,27 @@ def test_minimal_case():
         N=N,
         L=L,
         M=M,
+        conv_num=5,
+        use_resnet=False,
         use_PCA=False,  # Disable PCA for minimal case
     )
 
     try:
-        centers, output = model(positions, features, n_select=n_select)
+        centers, output = model(positions, features, positions.shape[0], n_select)
         expected_shape = (n_select, out_channels)
         expected_centers_shape = (n_select, 3)
 
         if output.shape == expected_shape and centers.shape == expected_centers_shape:
-            print(f"✅ Minimal case passed: output {output.shape}, centers {centers.shape}")
+            print(
+                f"✅ Minimal case passed: output {output.shape}, centers {centers.shape}"
+            )
             return True
         else:
             print(f"❌ Shape mismatch:")
             print(f"    Got output {output.shape}, centers {centers.shape}")
-            print(f"    Expected output {expected_shape}, centers {expected_centers_shape}")
+            print(
+                f"    Expected output {expected_shape}, centers {expected_centers_shape}"
+            )
             return False
 
     except Exception as e:
@@ -462,6 +526,8 @@ def test_n_select_variations():
         N=N,
         L=L,
         M=M,
+        conv_num=16,
+        use_resnet=False,
         use_PCA=True,
     )
 
@@ -478,19 +544,26 @@ def test_n_select_variations():
     for n_select, description in test_cases:
         try:
             print(f"  Testing {description} (n_select={n_select})...")
-            centers, output = model(positions, features, n_select=n_select)
+            centers, output = model(positions, features, positions.shape[0], n_select)
 
             # Expected n_select should be clamped to available points
             expected_n = min(n_select, n_points)
             expected_shape = (expected_n, out_channels)
             expected_centers_shape = (expected_n, 3)
 
-            if output.shape == expected_shape and centers.shape == expected_centers_shape:
-                print(f"    ✅ {description}: output {output.shape}, centers {centers.shape}")
+            if (
+                output.shape == expected_shape
+                and centers.shape == expected_centers_shape
+            ):
+                print(
+                    f"    ✅ {description}: output {output.shape}, centers {centers.shape}"
+                )
             else:
                 print(f"    ❌ Shape mismatch for {description}:")
                 print(f"       Got output {output.shape}, centers {centers.shape}")
-                print(f"       Expected output {expected_shape}, centers {expected_centers_shape}")
+                print(
+                    f"       Expected output {expected_shape}, centers {expected_centers_shape}"
+                )
                 return False
 
         except Exception as e:

@@ -17,7 +17,7 @@ def _poly_eval_impl(x, coeffs):
 
 
 # 尝试编译，如果失败则使用未编译版本
-if os.environ.get('TORCH_COMPILE_DISABLE', '0') == '1':
+if os.environ.get("TORCH_COMPILE_DISABLE", "0") == "1":
     poly_eval = _poly_eval_impl
 else:
     try:
@@ -400,7 +400,6 @@ class SphericalHarmonicFunc:
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
         poly_val = _poly_eval_impl(x, coeffs)
 
-
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^m
         if self.m_abs > 0:
             sin_theta: torch.Tensor = torch.sin(theta)
@@ -506,7 +505,7 @@ class SphericalHarmonicFunc:
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)
         if len(deriv_coeffs) > 0:
-            poly_deriv_val = _poly_eval_impl(x,deriv_coeffs)
+            poly_deriv_val = _poly_eval_impl(x, deriv_coeffs)
 
         # \frac{1}{\sin\theta} (|m| Saved - N \cos(m\phi) sin^{|m|+2}\theta Poly')
         dY_dtheta: torch.Tensor = (
@@ -565,7 +564,7 @@ class SphericalHarmonicFunc:
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)
         if len(deriv_coeffs) > 0:
-            poly_deriv_val = _poly_eval_impl(x,deriv_coeffs)
+            poly_deriv_val = _poly_eval_impl(x, deriv_coeffs)
 
         # \frac{1}{\sin\theta} (|m| Saved - N \sin(m\phi) sin^{|m|+2}\theta Poly')
         dY_dtheta: torch.Tensor = (
@@ -931,7 +930,7 @@ class HydrogenWaveFunc:
         radial_part: torch.Tensor = (
             torch.exp(-r / 2)
             * (r**self.k)
-            * self.radial_normalization_factor
+            * self.radial_normalization_factor.to(r.device)
             * laguerre_value
         )
 

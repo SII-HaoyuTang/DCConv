@@ -1,10 +1,9 @@
 import torch
 import torch.nn as nn
-
-from aggregation import AggregationLayer
-from kernel import DCConv3dKernelPolynomials
-from selector import SelectorConfig, SelectorFactory
-from transformation import CoordinateTransformer
+from .aggregation import AggregationLayer
+from .kernel import DCConv3dKernelPolynomials
+from .selector import SelectorConfig, SelectorFactory
+from .transformation import CoordinateTransformer
 
 
 class DistanceContainedConv3d(nn.Module):
@@ -18,6 +17,7 @@ class DistanceContainedConv3d(nn.Module):
     generation, and feature aggregation. Optionally, it can also incorporate a ResNet-like residual connection for
     improved gradient flow during training.
     """
+
     def __init__(
         self,
         in_channels: int,
@@ -136,9 +136,7 @@ class DistanceContainedConv3d(nn.Module):
 
         # Step 4: 特征聚合 (Feature Aggregation)
         # 需要将 local_features 从 (outpoint_num, k, Ci) 转换为 (Ci, outpoint_num, k)
-        local_features = local_features.permute(
-            2, 0, 1
-        )  # (Ci, outpoint_num, k)
+        local_features = local_features.permute(2, 0, 1)  # (Ci, outpoint_num, k)
 
         # 使用聚合层进行加权求和
         output = self.aggregation.forward(
@@ -150,14 +148,16 @@ class DistanceContainedConv3d(nn.Module):
             # if resnet_channel is given by last DCConv, resnet continue. Else the shortcut has been done, start a
             # new resnet.
             if isinstance(resnet_channel, torch.Tensor):
-                resnet_channel = self.cotrans.extract_local_features(resnet_channel, neighbor_indices)
+                resnet_channel = self.cotrans.extract_local_features(
+                    resnet_channel, neighbor_indices
+                )
                 resnet_channel = resnet_channel.permute(2, 0, 1)
             else:
                 resnet_channel = local_features.clone()
 
             # Step 3': 残差核权重生成 (Resnet Kernel Weight Generation)
             resnet_kernel_weights = torch.ones(
-                self.out_channels, self.in_channels, outpoint_num*space_num, conv_num
+                self.out_channels, self.in_channels, outpoint_num * space_num, conv_num
             )  # Shape: (Co, Ci, outpoint_num, k)
 
             # Step 4‘: 特征聚合 (Feature Aggregation)

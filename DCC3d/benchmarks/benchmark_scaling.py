@@ -1,9 +1,8 @@
-```python
+import os
 import time
 
-import os
 # Enable MPS fallback for missing operators (like linalg_eigh)
-os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import numpy as np
 import torch

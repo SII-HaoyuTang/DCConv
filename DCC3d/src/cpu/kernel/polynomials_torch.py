@@ -399,7 +399,8 @@ class SphericalHarmonicFunc:
 
         # 使用霍纳法计算多项式部分（包含归一化常数）
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
-        poly_val = _poly_eval_impl(x, coeffs)
+        # [FIX] 翻转系数
+        poly_val = _poly_eval_impl(x, torch.flip(coeffs, dims=[0]))
 
 
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^|m|
@@ -506,6 +507,7 @@ class SphericalHarmonicFunc:
 
         # 计算多项式导数值Poly'
         poly_deriv_val: torch.Tensor = torch.zeros_like(x)
+        # [FIX] 翻转导数系数以匹配 poly_eval 预期
         if len(deriv_coeffs) > 0:
             poly_deriv_val = _poly_eval_impl(x, deriv_coeffs)
 

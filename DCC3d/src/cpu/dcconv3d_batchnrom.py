@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class Dcconv3dBatchnorm(nn.Module):
+class Dcconv3dBatchNorm(nn.Module):
     """
     A module that applies 1D batch normalization to a 3D convolutional layer's output.
 
@@ -18,10 +18,37 @@ class Dcconv3dBatchnorm(nn.Module):
     """
 
     def __init__(self, num_features):
-        super(Dcconv3dBatchnorm, self).__init__()
+        super(Dcconv3dBatchNorm, self).__init__()
         self.batchnorm1d = nn.BatchNorm1d(num_features=num_features)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, num_points: int) -> torch.Tensor:
+        N, M = x.shape
+        x = x.reshape(N//num_points, num_points, M).permute(0, 2, 1)
+
         out = self.batchnorm1d(x)
+
+        out = out.permute(0, 2, 1)
+
+        # 步骤2: 重塑为 (N, M)
+        out = out.reshape(N, M)
+
+        return out
+
+
+class Dcconv3dLayerNorm(nn.Module):
+    def __init__(self, norm_shape):
+        super(Dcconv3dLayerNorm, self).__init__()
+        self.layernorm = nn.LayerNorm(normalized_shape=norm_shape)
+
+    def forward(self, x: torch.Tensor, num_points: int) -> torch.Tensor:
+        N, M = x.shape
+        x = x.reshape(N//num_points, num_points, M).permute(0, 2, 1)
+
+        out = self.layernorm(x)
+
+        out = out.permute(0, 2, 1)
+
+        # 步骤2: 重塑为 (N, M)
+        out = out.reshape(N, M)
 
         return out

@@ -82,6 +82,7 @@ class DistanceContainedConv3d(nn.Module):
         self.kernel = DCConv3dKernelPolynomials(out_channels, in_channels, N, L, M)
         self.aggregation = AggregationLayer()
         self.use_resnet = use_resnet
+        self.bias = torch.nn.Parameter(torch.zeros(out_channels,))
         if self.use_resnet:
             self.in_channels = in_channels
             self.out_channels = out_channels
@@ -142,7 +143,7 @@ class DistanceContainedConv3d(nn.Module):
         output = self.aggregation.forward(
             local_features, kernel_weights
         )  # Shape: (Co, outpoint_num)
-        output = output.permute(1, 0)  # (outpoint_num, Co)
+        output = output.permute(1, 0) + self.bias # (outpoint_num, Co)
 
         if self.use_resnet:
             # if resnet_channel is given by last DCConv, resnet continue. Else the shortcut has been done, start a

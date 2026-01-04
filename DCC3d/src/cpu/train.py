@@ -13,25 +13,19 @@ def get_dataloader():
     points_csv = "./data/qm9.csv"
     indices_csv = "./data/qm9_indices.csv"
 
-    # 创建变换
-    transform = PointCloudTransform(
-        normalize_pos=False,
-        center_pos=True,
-        random_rotate=False,  # 训练时开启数据增强
-    )
-
-    # 创建完整数据集
+    # 创建完整数据集（不归一化目标值）
+    print("创建数据集...")
     full_dataset = PointCloudQM9Dataset(
         points_csv=points_csv,
         indices_csv=indices_csv,
-        transform=transform,
+        transform=None,  # 先不应用变换
         target_column="internal_energy",
         node_features=[
             "atom_mass",
             "atom_valence_electrons",
             "atom_radius",
             "atom_mulliken_charge",
-        ],  # 根据实际列名调整
+        ],
     )
 
     # 划分数据集
@@ -39,6 +33,37 @@ def get_dataloader():
     val_size = int(0.1 * len(full_dataset))
     test_size = len(full_dataset) - train_size - val_size
 
+    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, val_size, test_size]
+    )
+
+    # 从训练集计算目标值统计信息（推荐做法）
+    print("\n计算训练集目标值统计信息...")
+    train_targets = []
+    for i in range(len(train_dataset)):
+        sample = train_dataset[i]
+        train_targets.append(sample["y"])
+
+    train_target_stats = PointCloudTransform.compute_target_stats(
+        train_targets, method="zscore"
+    )
+    print(f"训练集目标统计: {train_target_stats}")
+
+    # 创建transform，使用训练集的统计信息
+    transform = PointCloudTransform(
+        normalize_pos=False,
+        center_pos=True,
+        random_rotate=False,
+        normalize_target=True,
+        target_stats=train_target_stats,
+        target_normalization_method="zscore",
+        preserve_target_range=True,  # 保存原始值以便反向变换
+    )
+
+    # 将transform应用到数据集
+    full_dataset.transform = transform
+
+    # 重新获取变换后的数据集
     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
         full_dataset, [train_size, val_size, test_size]
     )
@@ -59,7 +84,7 @@ def get_dataloader():
     val_loader = DataLoader(
         val_dataset,
         batch_size=256,
-        shuffle=False,
+        shuffle=True,
         collate_fn=collater,
         num_workers=4,
         pin_memory=True,
@@ -86,7 +111,7 @@ def evaluate(model, dataloader, criterion, device):
                 batch["pos"].to(device),
                 batch["x"].to(device),
                 batch["pos_batch"].to(device),
-                (batch['y']/batch['num_atoms']).to(device),
+                (batch['y']).to(device),
             )
 
             outputs = model(position_matrix, channel_matrix, belonging)
@@ -116,12 +141,13 @@ def train(num_epochs, learning_rate, device):
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
+        running_mae = 0.0
         for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}"):
             position_matrix, channel_matrix, belonging, target = (
                 batch['pos'].to(device),
                 batch['x'].to(device),
                 batch['pos_batch'].to(device),
-                (batch['y']/batch['num_atoms']).to(device),
+                (batch['y']).to(device),
             )
 
             # 确保 target 的形状与 outputs 的形状一致
@@ -135,12 +161,15 @@ def train(num_epochs, learning_rate, device):
             # 反向传播和优化
             optimizer.zero_grad()
             loss.backward()
+            mae = torch.mean(torch.abs(outputs - target))
             optimizer.step()
 
             running_loss += loss.item()
+            running_mae += mae.item()
 
         # 计算平均训练损失
         avg_train_loss = running_loss / len(train_loader)
+        avg_train_mae = running_mae / len(train_loader)
 
         # 验证
         val_loss, val_mae = evaluate(model, val_loader, criterion, device)
@@ -148,6 +177,7 @@ def train(num_epochs, learning_rate, device):
         # 使用 wandb 记录损失和准确率
         wandb.log({
             "Train Loss": avg_train_loss,
+            "Train MAE": avg_train_mae,
             "Validation Loss": val_loss,
             "Validation MAE": val_mae
         })
@@ -169,7 +199,7 @@ def train(num_epochs, learning_rate, device):
 if __name__ == "__main__":
     # 设置设备
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_epochs = 50
+    num_epochs = 1000
     learning_rate = 0.001
 
     # 开始训练

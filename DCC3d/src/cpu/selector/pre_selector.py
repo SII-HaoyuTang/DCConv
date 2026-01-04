@@ -83,7 +83,7 @@ class PreSelector:
 
         # 创建全局索引映射
         # 对于每个点，我们需要知道它在原始positions中的位置
-        # 我们假设belonging和positions的顺序是对应的
+        # belonging和positions的顺序是对应的
         num_points = positions.shape[0]
 
         # 计算每个点云中的点数和偏移量

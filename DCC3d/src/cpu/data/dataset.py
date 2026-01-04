@@ -33,6 +33,7 @@ def fix_decimal_point(value):
 
     return value
 
+
 def clean_scientific_notation(value):
     """
     更健壮的清理函数，处理各种边缘情况
@@ -52,13 +53,13 @@ def clean_scientific_notation(value):
     # 常见的非标准科学计数法模式
     patterns = [
         # 模式1: 数字E/e^数字（如 -6.E^-6）
-        (r'([+-]?\d*\.?\d*)[Ee]\^([+-]?\d+)', r'\1e\2'),
+        (r"([+-]?\d*\.?\d*)[Ee]\^([+-]?\d+)", r"\1e\2"),
         # 模式2: 数字E/e^+数字（如 1.23E^+4）
-        (r'([+-]?\d*\.?\d*)[Ee]\^\+(\d+)', r'\1e+\2'),
+        (r"([+-]?\d*\.?\d*)[Ee]\^\+(\d+)", r"\1e+\2"),
         # 模式3: 数字E/e^-数字（如 5.67e^-3）
-        (r'([+-]?\d*\.?\d*)[Ee]\^-(\d+)', r'\1e-\2'),
+        (r"([+-]?\d*\.?\d*)[Ee]\^-(\d+)", r"\1e-\2"),
         # 模式4: 数字E/e数字（没有^，但可能有问题）
-        (r'([+-]?\d*\.?\d*)[Ee](\d+)', r'\1e\2'),
+        (r"([+-]?\d*\.?\d*)[Ee](\d+)", r"\1e\2"),
     ]
 
     original = str_value
@@ -70,8 +71,8 @@ def clean_scientific_notation(value):
             return cleaned
 
     # 如果正则表达式没有匹配，尝试简单替换
-    if '^' in str_value:
-        cleaned = str_value.replace('^', '')
+    if "^" in str_value:
+        cleaned = str_value.replace("^", "")
         cleaned = fix_decimal_point(cleaned)
         return cleaned
 
@@ -138,14 +139,16 @@ class PointCloudQM9Dataset(Dataset):
             获取分子的SMILES表示（如果有）。
     """
 
-    def __init__(self,
-                 points_csv: str,
-                 indices_csv: str,
-                 transform: Optional[callable] = None,
-                 target_column: str = 'energy',
-                 node_features: List[str] = None,
-                 clean_scientific_notation: bool = True,
-                 device: str = 'cpu'):
+    def __init__(
+        self,
+        points_csv: str,
+        indices_csv: str,
+        transform: Optional[callable] = None,
+        target_column: str = "energy",
+        node_features: List[str] = None,
+        clean_scientific_notation: bool = True,
+        device: str = "cpu",
+    ):
         """
         Initializes a dataset for molecular data, loading points and indices from CSV files.
 
@@ -192,6 +195,16 @@ class PointCloudQM9Dataset(Dataset):
             self.points_df = clean_dataframe_scientific_notation(self.points_df)
             self.indices_df = clean_dataframe_scientific_notation(self.indices_df)
 
+        # 确保目标列是数值类型
+        if target_column in self.indices_df.columns:
+            self.indices_df[target_column] = safe_convert_to_numeric(
+                self.indices_df[target_column]
+            )
+        else:
+            raise ValueError(
+                f"目标列 '{target_column}' 不存在于索引文件中。可用列: {self.indices_df.columns.tolist()}"
+            )
+
         # 设置索引
         self.indices_df.set_index("molecule_id", inplace=True)
 
@@ -230,16 +243,40 @@ class PointCloudQM9Dataset(Dataset):
             f"分子大小统计: 最大={self.max_atoms}, 最小={self.min_atoms}, 平均={self.avg_atoms:.2f}"
         )
 
-        # 特征统计（可选）
+        # 特征统计
         self.feature_stats = {}
         for feature in self.node_features:
-            if self.points_df[feature].dtype in [np.float64, np.float32]:
+            if feature in self.points_df.columns:
+                feature_series = safe_convert_to_numeric(self.points_df[feature])
                 self.feature_stats[feature] = {
-                    "mean": self.points_df[feature].mean(),
-                    "std": self.points_df[feature].std(),
-                    "min": self.points_df[feature].min(),
-                    "max": self.points_df[feature].max(),
+                    "mean": float(feature_series.mean()),
+                    "std": float(feature_series.std()),
+                    "min": float(feature_series.min()),
+                    "max": float(feature_series.max()),
                 }
+
+        # 目标值统计
+        self.target_stats = {}
+        if self.target_column in self.indices_df.columns:
+            target_series = self.indices_df[self.target_column]
+            self.target_stats = {
+                "mean": float(target_series.mean()),
+                "std": float(target_series.std()),
+                "min": float(target_series.min()),
+                "max": float(target_series.max()),
+                "median": float(target_series.median()),
+            }
+
+            # 计算四分位距
+            q1 = float(target_series.quantile(0.25))
+            q3 = float(target_series.quantile(0.75))
+            self.target_stats["iqr"] = q3 - q1
+
+            print(
+                f"目标值统计: 均值={self.target_stats['mean']:.4f}, "
+                f"标准差={self.target_stats['std']:.4f}, "
+                f"范围=[{self.target_stats['min']:.4f}, {self.target_stats['max']:.4f}]"
+            )
 
     def __len__(self) -> int:
         """返回数据集大小"""
@@ -267,7 +304,21 @@ class PointCloudQM9Dataset(Dataset):
         pos = molecule_points[["x", "y", "z"]].values.astype(np.float32)
 
         # 获取节点特征
-        x = molecule_points[self.node_features].values.astype(np.float32)
+        if self.node_features:
+            x_values = []
+            for feature in self.node_features:
+                if feature in molecule_points.columns:
+                    # 确保特征值是数值类型
+                    feature_values = safe_convert_to_numeric(
+                        molecule_points[feature]
+                    ).values.astype(np.float32)
+                    x_values.append(feature_values)
+            if x_values:
+                x = np.column_stack(x_values)
+            else:
+                x = np.zeros((len(pos), 0), dtype=np.float32)
+        else:
+            x = np.zeros((len(pos), 0), dtype=np.float32)
 
         # 获取目标值
         y = np.array(
@@ -364,9 +415,14 @@ class PointCloudTransform:
         self,
         normalize_pos: bool = False,
         normalize_features: bool = False,
+        normalize_target: bool = False,
         feature_stats: Dict = None,
+        target_stats: Dict = None,
         center_pos: bool = True,
         random_rotate: bool = False,
+        target_key: str = "y",  # 目标值的字典键
+        target_normalization_method: str = "zscore",  # 归一化方法: "zscore", "minmax", "robust"
+        preserve_target_range: bool = False,  # 是否保留目标原始范围（仅对minmax有效）
     ):
         """
         初始化变换
@@ -374,20 +430,37 @@ class PointCloudTransform:
         参数:
             normalize_pos: 是否标准化坐标
             normalize_features: 是否标准化特征
+            normalize_target: 是否标准化目标值
             feature_stats: 特征统计信息
+            target_stats: 目标统计信息
             center_pos: 是否将点云中心置于原点
             random_rotate: 是否随机旋转（数据增强）
+            target_key: 目标值在字典中的键
+            target_normalization_method: 目标归一化方法
+            preserve_target_range: 是否保留目标原始范围（用于反向变换）
         """
         self.normalize_pos = normalize_pos
         self.normalize_features = normalize_features
+        self.normalize_target = normalize_target
         self.feature_stats = feature_stats or {}
+        self.target_stats = target_stats or {}
         self.center_pos = center_pos
         self.random_rotate = random_rotate
+        self.target_key = target_key
+        self.target_normalization_method = target_normalization_method
+        self.preserve_target_range = preserve_target_range
+
+        # 验证归一化方法
+        valid_methods = ["zscore", "minmax", "robust", "log", "quantile"]
+        if target_normalization_method not in valid_methods:
+            raise ValueError(
+                f"无效的归一化方法: {target_normalization_method}. 可选方法: {valid_methods}"
+            )
 
     def __call__(self, sample: Dict) -> Dict:
         """应用变换"""
-        # one sample is one point cloud
-        pos = sample["pos"]  # position x, y, z
+        # 一个样本是一个点云
+        pos = sample["pos"]  # 位置 x, y, z
         x = sample["x"]
 
         # 1. 中心化点云
@@ -398,23 +471,86 @@ class PointCloudTransform:
         # 2. 标准化坐标
         if self.normalize_pos:
             pos_std = pos.std(dim=0, keepdim=True)
-            pos_std = torch.where(
-                torch.Tensor(pos_std == 0), torch.ones_like(pos_std), pos_std
-            )
+            pos_std = torch.where(pos_std == 0, torch.ones_like(pos_std), pos_std)
             pos = pos / pos_std
 
         # 3. 标准化特征
         if self.normalize_features and self.feature_stats:
             for i, feature in enumerate(self.feature_stats.keys()):
-                stats = self.feature_stats[feature]
+                if i < x.shape[1]:  # 确保索引在范围内
+                    stats = self.feature_stats[feature]
+                    if "mean" in stats and "std" in stats:
+                        mean = torch.tensor(stats["mean"], dtype=torch.float32)
+                        std = torch.tensor(stats["std"], dtype=torch.float32)
+                        if std == 0:
+                            std = torch.tensor(1.0, dtype=torch.float32)
+                        x[:, i] = (x[:, i] - mean) / std
+
+        # 4. 标准化目标值（如果存在）
+        if self.normalize_target and self.target_key in sample:
+            target = sample[self.target_key]
+            stats = self.target_stats
+
+            if self.target_normalization_method == "zscore":
+                # Z-score标准化: (x - mean) / std
                 if "mean" in stats and "std" in stats:
                     mean = torch.tensor(stats["mean"], dtype=torch.float32)
                     std = torch.tensor(stats["std"], dtype=torch.float32)
                     if std == 0:
                         std = torch.tensor(1.0, dtype=torch.float32)
-                    x[:, i] = (x[:, i] - mean) / std
+                    target = (target - mean) / std
 
-        # 4. 随机旋转（数据增强）
+            elif self.target_normalization_method == "minmax":
+                # 最小-最大归一化: (x - min) / (max - min)
+                if "min" in stats and "max" in stats:
+                    min_val = torch.tensor(stats["min"], dtype=torch.float32)
+                    max_val = torch.tensor(stats["max"], dtype=torch.float32)
+                    range_val = max_val - min_val
+                    if range_val == 0:
+                        range_val = torch.tensor(1.0, dtype=torch.float32)
+                    target = (target - min_val) / range_val
+
+                    # 可选：缩放到[0, 1]范围之外
+                    if "target_min" in stats and "target_max" in stats:
+                        new_min = torch.tensor(stats["target_min"], dtype=torch.float32)
+                        new_max = torch.tensor(stats["target_max"], dtype=torch.float32)
+                        target = target * (new_max - new_min) + new_min
+
+            elif self.target_normalization_method == "robust":
+                # 鲁棒归一化: (x - median) / IQR
+                if "median" in stats and "iqr" in stats:
+                    median = torch.tensor(stats["median"], dtype=torch.float32)
+                    iqr = torch.tensor(stats["iqr"], dtype=torch.float32)
+                    if iqr == 0:
+                        iqr = torch.tensor(1.0, dtype=torch.float32)
+                    target = (target - median) / iqr
+
+            elif self.target_normalization_method == "log":
+                # 对数变换: log(x + eps)
+                eps = stats.get("eps", 1e-8)
+                if "shift" in stats:  # 如果有偏移量
+                    target = target + stats["shift"]
+                target = torch.log(target + eps)
+
+            elif self.target_normalization_method == "quantile":
+                # 分位数归一化（需要预计算的分位数映射）
+                if "quantile_mapping" in stats:
+                    # 这里简化为使用预计算的均值和标准差
+                    if "mean" in stats and "std" in stats:
+                        mean = torch.tensor(stats["mean"], dtype=torch.float32)
+                        std = torch.tensor(stats["std"], dtype=torch.float32)
+                        if std == 0:
+                            std = torch.tensor(1.0, dtype=torch.float32)
+                        target = (target - mean) / std
+
+            # 保存原始目标值以便反向变换
+            if self.preserve_target_range:
+                sample[f"{self.target_key}_original"] = sample[self.target_key].clone()
+
+            # 更新归一化后的目标值
+            sample[self.target_key] = target
+
+        # 5. 随机旋转（数据增强）
         if self.random_rotate and torch.rand(1) > 0.5:
             # 生成随机旋转矩阵
             angle = torch.rand(1) * 2 * torch.pi
@@ -432,6 +568,171 @@ class PointCloudTransform:
 
         return sample
 
+    def inverse_transform_target(self, normalized_target: torch.Tensor) -> torch.Tensor:
+        """将归一化的目标值反向变换回原始尺度"""
+        if not self.normalize_target or not self.target_stats:
+            return normalized_target
+
+        stats = self.target_stats
+
+        if self.target_normalization_method == "zscore":
+            if "mean" in stats and "std" in stats:
+                mean = torch.tensor(stats["mean"], dtype=torch.float32)
+                std = torch.tensor(stats["std"], dtype=torch.float32)
+                if std == 0:
+                    std = torch.tensor(1.0, dtype=torch.float32)
+                return normalized_target * std + mean
+
+        elif self.target_normalization_method == "minmax":
+            if "min" in stats and "max" in stats:
+                min_val = torch.tensor(stats["min"], dtype=torch.float32)
+                max_val = torch.tensor(stats["max"], dtype=torch.float32)
+                range_val = max_val - min_val
+                if range_val == 0:
+                    range_val = torch.tensor(1.0, dtype=torch.float32)
+
+                # 如果缩放过范围
+                if "target_min" in stats and "target_max" in stats:
+                    new_min = torch.tensor(stats["target_min"], dtype=torch.float32)
+                    new_max = torch.tensor(stats["target_max"], dtype=torch.float32)
+                    # 先缩放到[0, 1]
+                    normalized_target = (normalized_target - new_min) / (
+                        new_max - new_min
+                    )
+
+                return normalized_target * range_val + min_val
+
+        elif self.target_normalization_method == "robust":
+            if "median" in stats and "iqr" in stats:
+                median = torch.tensor(stats["median"], dtype=torch.float32)
+                iqr = torch.tensor(stats["iqr"], dtype=torch.float32)
+                if iqr == 0:
+                    iqr = torch.tensor(1.0, dtype=torch.float32)
+                return normalized_target * iqr + median
+
+        elif self.target_normalization_method == "log":
+            eps = stats.get("eps", 1e-8)
+            result = torch.exp(normalized_target) - eps
+            if "shift" in stats:
+                result = result - stats["shift"]
+            return result
+
+        elif self.target_normalization_method == "quantile":
+            # 分位数归一化的逆变换较复杂，这里简化为Z-score逆变换
+            if "mean" in stats and "std" in stats:
+                mean = torch.tensor(stats["mean"], dtype=torch.float32)
+                std = torch.tensor(stats["std"], dtype=torch.float32)
+                if std == 0:
+                    std = torch.tensor(1.0, dtype=torch.float32)
+                return normalized_target * std + mean
+
+        # 如果无法逆变换，返回原始值
+        return normalized_target
+
+    @staticmethod
+    def compute_target_stats(
+        targets: List[torch.Tensor], method: str = "zscore", **kwargs
+    ) -> Dict:
+        """
+        计算目标值的统计信息
+
+        参数:
+            targets: 目标值列表
+            method: 归一化方法
+            **kwargs: 其他参数
+        """
+        if not targets:
+            return {}
+
+        # 合并所有目标值
+        all_targets = torch.cat(targets)
+
+        stats = {}
+
+        if method == "zscore":
+            stats["mean"] = float(all_targets.mean().item())
+            stats["std"] = float(all_targets.std().item())
+
+        elif method == "minmax":
+            stats["min"] = float(all_targets.min().item())
+            stats["max"] = float(all_targets.max().item())
+
+            # 可选的自定义范围
+            target_min = kwargs.get("target_min", 0.0)
+            target_max = kwargs.get("target_max", 1.0)
+            if target_min != 0.0 or target_max != 1.0:
+                stats["target_min"] = target_min
+                stats["target_max"] = target_max
+
+        elif method == "robust":
+            stats["median"] = float(torch.median(all_targets).item())
+
+            # 计算四分位距
+            q75, q25 = (
+                torch.quantile(all_targets, 0.75),
+                torch.quantile(all_targets, 0.25),
+            )
+            stats["iqr"] = float((q75 - q25).item())
+
+        elif method == "log":
+            # 确保所有值都是正数
+            min_val = all_targets.min().item()
+            if min_val <= 0:
+                shift = abs(min_val) + kwargs.get("eps", 1e-8)
+                stats["shift"] = shift
+                all_targets = all_targets + shift
+            stats["eps"] = kwargs.get("eps", 1e-8)
+
+        elif method == "quantile":
+            # 计算分位数映射（简化版本）
+            stats["mean"] = float(all_targets.mean().item())
+            stats["std"] = float(all_targets.std().item())
+
+            # 实际应用中可能需要更复杂的分位数映射
+            quantiles = kwargs.get("quantiles", 100)
+            stats["quantiles"] = torch.quantile(
+                all_targets, torch.linspace(0, 1, quantiles)
+            ).tolist()
+
+        return stats
+
+
+def compute_dataset_target_stats(
+    dataset: PointCloudQM9Dataset, target_column: str = None
+) -> Dict:
+    """
+    计算数据集目标列的统计信息
+
+    参数:
+        dataset: PointCloudQM9Dataset实例
+        target_column: 目标列名，如果为None则使用数据集中的target_column
+
+    返回:
+        目标统计信息字典
+    """
+    if target_column is None:
+        target_column = dataset.target_column
+
+    if target_column not in dataset.indices_df.columns:
+        raise ValueError(f"目标列 '{target_column}' 不存在于数据集中")
+
+    target_series = dataset.indices_df[target_column]
+
+    stats = {
+        "mean": float(target_series.mean()),
+        "std": float(target_series.std()),
+        "min": float(target_series.min()),
+        "max": float(target_series.max()),
+        "median": float(target_series.median()),
+    }
+
+    # 计算四分位距
+    q1 = float(target_series.quantile(0.25))
+    q3 = float(target_series.quantile(0.75))
+    stats["iqr"] = q3 - q1
+
+    return stats
+
 
 # 使用示例
 if __name__ == "__main__":
@@ -439,26 +740,19 @@ if __name__ == "__main__":
     points_csv = "./qm9.csv"
     indices_csv = "./qm9_indices.csv"
 
-    # 创建变换
-    transform = PointCloudTransform(
-        normalize_pos=False,
-        center_pos=True,
-        random_rotate=False,  # 训练时开启数据增强
-    )
-
-    # 创建完整数据集
+    # 创建完整数据集（不归一化目标值）
     print("创建数据集...")
     full_dataset = PointCloudQM9Dataset(
         points_csv=points_csv,
         indices_csv=indices_csv,
-        transform=transform,
+        transform=None,  # 先不应用变换
         target_column="internal_energy",
         node_features=[
             "atom_mass",
             "atom_valence_electrons",
             "atom_radius",
             "atom_mulliken_charge",
-        ],  # 根据实际列名调整
+        ],
     )
 
     # 划分数据集
@@ -466,6 +760,37 @@ if __name__ == "__main__":
     val_size = int(0.1 * len(full_dataset))
     test_size = len(full_dataset) - train_size - val_size
 
+    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+        full_dataset, [train_size, val_size, test_size]
+    )
+
+    # 从训练集计算目标值统计信息（推荐做法）
+    print("\n计算训练集目标值统计信息...")
+    train_targets = []
+    for i in range(len(train_dataset)):
+        sample = train_dataset[i]
+        train_targets.append(sample["y"])
+
+    train_target_stats = PointCloudTransform.compute_target_stats(
+        train_targets, method="zscore"
+    )
+    print(f"训练集目标统计: {train_target_stats}")
+
+    # 创建transform，使用训练集的统计信息
+    transform = PointCloudTransform(
+        normalize_pos=False,
+        center_pos=True,
+        random_rotate=False,
+        normalize_target=True,
+        target_stats=train_target_stats,
+        target_normalization_method="zscore",
+        preserve_target_range=True,  # 保存原始值以便反向变换
+    )
+
+    # 将transform应用到数据集
+    full_dataset.transform = transform
+
+    # 重新获取变换后的数据集
     train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
         full_dataset, [train_size, val_size, test_size]
     )
@@ -512,7 +837,16 @@ if __name__ == "__main__":
         print(f"  原子数: {batch['num_atoms'].shape}")  # (batch_size,)
         print(f"  总原子数: {batch['total_atoms'].item()}")
 
+        # 显示归一化后的目标值范围
+        y_min = batch["y"].min().item()
+        y_max = batch["y"].max().item()
+        print(f"  归一化目标值范围: [{y_min:.4f}, {y_max:.4f}]")
+
         if batch_idx >= 2:  # 只查看前3个批次
             break
 
     print(f"\n数据集划分: 训练集={train_size}, 验证集={val_size}, 测试集={test_size}")
+    print(
+        f"目标值统计信息: 均值={train_target_stats.get('mean', 'N/A'):.4f}, "
+        f"标准差={train_target_stats.get('std', 'N/A'):.4f}"
+    )

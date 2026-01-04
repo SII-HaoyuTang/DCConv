@@ -401,7 +401,6 @@ class SphericalHarmonicFunc:
 
         # 使用霍纳法计算多项式部分（包含归一化常数）
         coeffs: torch.Tensor = self.horner_coeffs.to(theta.device)
-        # [FIX] 翻转系数
         poly_val = _poly_eval_impl(x, coeffs)
 
         # 乘以 (1-x^2)^{|m|/2} = (sinθ)^|m|
@@ -899,7 +898,7 @@ class HydrogenWaveFunc:
         )
 
         self.radial_normalization_factor: torch.Tensor = torch.Tensor(
-            [np.sqrt(math.factorial(n - k - 1) / (2.0 * n * math.factorial(n + k)))]
+            [-np.sqrt(math.factorial(n - k - 1) / (2.0 * n * math.factorial(n + k)**3))]
         )
 
     def forward(

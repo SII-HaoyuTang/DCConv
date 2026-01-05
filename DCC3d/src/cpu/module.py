@@ -4,7 +4,7 @@ import torch.nn as nn
 from DCC3d.src.cpu.selector.pre_selector import PreSelector
 from DCC3d.src.cpu.selector import SelectorConfig, SelectorType
 from DCC3d.src.cpu.dcconv3d import DistanceContainedConv3d
-from DCC3d.src.cpu.dcconv3d_batchnrom import Dcconv3dBatchNorm
+from DCC3d.src.cpu.dcconv3d_batchnrom import Dcconv3dBatchNorm, Dcconv3dLayerNorm
 
 class ResnetBlock(nn.Module):
     def __init__(self, init_channels: int, out_channels: int, N: int, K: int, M: int, conv_nums: int, selector_config: SelectorConfig | None = None):
@@ -14,22 +14,22 @@ class ResnetBlock(nn.Module):
             selector_config = SelectorConfig(type=SelectorType.KNN)
 
         self.dcconv3d_1 = DistanceContainedConv3d(init_channels, out_channels, selector_config, N, K, M, conv_nums)
-        self.batchnorm_1 = Dcconv3dBatchNorm(out_channels)
+        self.layernorm_1 = Dcconv3dLayerNorm(out_channels)
 
         self.dcconv3d_2 = DistanceContainedConv3d(out_channels, out_channels, selector_config, N, K, M, conv_nums)
-        self.batchnorm_2 = Dcconv3dBatchNorm(out_channels)
+        self.layernorm_2 = Dcconv3dLayerNorm(out_channels)
 
-        self.batchnorm_resnet = Dcconv3dBatchNorm(out_channels)
+        self.layernorm_resnet = Dcconv3dLayerNorm(out_channels)
 
     def forward(self, position_matrix: torch.Tensor, channel_matrix: torch.Tensor, n_select: list[int]):
 
         out_position, out_channel, resnet_channel = self.dcconv3d_1(position_matrix, channel_matrix, n_select[0], n_select[1])
-        out_channel = self.batchnorm_1(out_channel, n_select[1])
+        out_channel = self.layernorm_1(out_channel, n_select[1])
 
         out_position, out_channel, resnet_channel = self.dcconv3d_2(out_position, out_channel, n_select[1], n_select[2], resnet_channel)
-        out_channel = self.batchnorm_2(out_channel, n_select[2])
+        out_channel = self.layernorm_2(out_channel, n_select[2])
 
-        out_channel += self.batchnorm_resnet(resnet_channel, n_select[2])
+        out_channel += self.layernorm_resnet(resnet_channel, n_select[2])
 
         return out_position, out_channel
 
@@ -68,7 +68,7 @@ class DCConvNet(nn.Module):
         selector_config = SelectorConfig(type=SelectorType.KNN)
 
         self.init_conv = DistanceContainedConv3d(num_features, 32, selector_config, 3, 2, 2, 9)
-        self.init_batchnorm = Dcconv3dBatchNorm(32)
+        self.init_layernorm = Dcconv3dLayerNorm(32)
 
         self.resnetblock_1 = ResnetBlock(32, 64, 3, 2, 2, 9, selector_config)
 
@@ -86,7 +86,7 @@ class DCConvNet(nn.Module):
 
         out_pos, out_ch ,res_ch = self.init_conv(position_matrix, channel_matrix, reduction_schedule[0], reduction_schedule[1])
         out_ch = out_ch + res_ch
-        out_ch = self.init_batchnorm(out_ch, reduction_schedule[1])
+        out_ch = self.init_layernorm(out_ch, reduction_schedule[1])
 
         out_pos, out_ch = self.resnetblock_1(out_pos, out_ch, [reduction_schedule[1], reduction_schedule[2], reduction_schedule[3]])
 

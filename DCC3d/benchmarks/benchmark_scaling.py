@@ -1,9 +1,9 @@
-```python
+import csv
+import os
 import time
 
-import os
 # Enable MPS fallback for missing operators (like linalg_eigh)
-os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import numpy as np
 import torch
@@ -13,6 +13,7 @@ from tqdm import tqdm
 from DCC3d.src.cpu.module import DCConvNet
 
 
+# set device to cpu
 def benchmark_batch_scaling():
     print("=" * 80)
     print("Benchmarking Batch Size Scaling: DCConvNet (Robust Mode)")
@@ -40,7 +41,15 @@ def benchmark_batch_scaling():
     model = DCConvNet(num_features=num_features).to(device)
     model.eval()
 
-    batch_sizes = [1, 2, 4, 8, 16, 32, 64]
+    batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128]
+
+    # Prepare CSV
+    csv_filename = "scaling_results.csv"
+    with open(csv_filename, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["Batch Size", "Total Points", "Avg Latency (ms)", "Throughput (samples/s)"]
+        )
 
     print("\n[Phase 1] Warming up compilation for ALL batch sizes...")
     # This ensures torch.compile handles all shapes BEFORE we measure time
@@ -67,7 +76,7 @@ def benchmark_batch_scaling():
             torch.arange(batch_size).repeat_interleave(n_points_per_sample).to(device)
         )
 
-        n_repeats = 20  # Increased repeats
+        n_repeats = 50  # Increased repeats
         start_event = time.time()
 
         with torch.no_grad():
@@ -88,6 +97,11 @@ def benchmark_batch_scaling():
             f"{batch_size:^12} | {total_points:^14} | {avg_latency_ms:^14.2f} | {throughput:^24.2f}"
         )
 
+        # Save to CSV
+        with open(csv_filename, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([batch_size, total_points, avg_latency_ms, throughput])
+
     print("=" * 80)
     print("Interpretation Guide:")
     print("1. Low GPU Utilization? Check if the log says 'Using CPU'.")
@@ -101,3 +115,4 @@ def benchmark_batch_scaling():
 
 if __name__ == "__main__":
     benchmark_batch_scaling()
+    print(f"\nResults saved to scaling_results.csv")

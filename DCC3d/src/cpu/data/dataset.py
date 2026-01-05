@@ -185,9 +185,9 @@ class PointCloudQM9Dataset(Dataset):
 
         # 读取数据
         print("正在读取点云数据...")
-        self.points_df = pd.read_csv(points_csv)
+        self.points_df = pd.read_csv(points_csv, low_memory=False)
         print("正在读取索引数据...")
-        self.indices_df = pd.read_csv(indices_csv)
+        self.indices_df = pd.read_csv(indices_csv, low_memory=False)
 
         # 如果需要，清理非标准科学计数法
         if clean_scientific_notation:

@@ -1,6 +1,7 @@
 import time
 import torch
 import numpy as np
+import csv
 import scipy.special
 from DCC3d.src.cpu.kernel.polynomials_torch import (
     AssociatedLaguerrePoly,
@@ -13,8 +14,23 @@ def benchmark_polynomials():
     print("Benchmarking Polynomials: Scipy vs Torch (Vectorized) - Variable Complexity")
     print("=" * 85)
 
-    n_samples = 100000
-    n_trials = 20
+    n_samples = 500000
+    n_trials = 50
+
+    # Prepare CSV
+    csv_filename = "polynomials_results.csv"
+    with open(csv_filename, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            [
+                "Type",
+                "Parameters",
+                "Degree",
+                "Torch Time (s)",
+                "Scipy Time (s)",
+                "Speedup",
+            ]
+        )
 
     # Random Inputs
     x_torch = torch.randn(n_samples)
@@ -62,6 +78,20 @@ def benchmark_polynomials():
             f"{f'n={n}, k={k}':^30} | {degree:^12} | {time_torch:^10.5f} | {time_scipy:^10.5f} | {time_scipy / time_torch:^8.2f}x"
         )
 
+        # Save to CSV
+        with open(csv_filename, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "Associated Laguerre",
+                    f"n={n}, k={k}",
+                    degree,
+                    time_torch,
+                    time_scipy,
+                    time_scipy / time_torch,
+                ]
+            )
+
     # --- 2. Spherical Harmonics ---
     print(
         f"\n[{'Spherical Harmonics':^30}] | {'Degree (l,m)':^12} | {'Torch (s)':^10} | {'Scipy (s)':^10} | {'Speedup':^8}"
@@ -93,6 +123,22 @@ def benchmark_polynomials():
         print(
             f"{f'l={l}, m={m}':^30} | {f'{l},{m}':^12} | {time_torch:^10.5f} | {time_scipy:^10.5f} | {time_scipy / time_torch:^8.2f}x"
         )
+
+        # Save to CSV
+        with open(csv_filename, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                [
+                    "Spherical Harmonics",
+                    f"l={l}, m={m}",
+                    f"{l},{m}",
+                    time_torch,
+                    time_scipy,
+                    time_scipy / time_torch,
+                ]
+            )
+
+    print(f"\nResults saved to {csv_filename}")
 
 
 if __name__ == "__main__":

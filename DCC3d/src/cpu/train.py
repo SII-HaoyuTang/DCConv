@@ -827,7 +827,7 @@ def main():
         )
 
     # 训练参数
-    num_epochs = 1000
+    num_epochs = 150
     learning_rate = 0.001
 
     # 从命令行参数获取配置

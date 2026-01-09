@@ -42,11 +42,9 @@ class Dcconv3dLayerNorm(nn.Module):
 
     def forward(self, x: torch.Tensor, num_points: int) -> torch.Tensor:
         N, M = x.shape
-        x = x.reshape(N//num_points, num_points, M).permute(0, 2, 1)
+        x = x.reshape(N//num_points, num_points, M)
 
         out = self.layernorm(x)
-
-        out = out.permute(0, 2, 1)
 
         # 步骤2: 重塑为 (N, M)
         out = out.reshape(N, M)

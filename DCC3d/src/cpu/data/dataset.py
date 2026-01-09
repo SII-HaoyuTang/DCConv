@@ -1,373 +1,348 @@
-from typing import Dict, List, Optional
-import re
-
-import numpy as np
 import pandas as pd
+import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset, DataLoader
+from typing import Dict, List, Optional
+import pickle
+import os
 
 
-def fix_decimal_point(value):
+class OptimizedQM9Dataset(Dataset):
     """
-    修复基数部分的小数点问题
+    优化的QM9数据集处理类，显著提高加载速度
+
+    主要优化：
+    1. 预加载并缓存数据到内存
+    2. 使用numpy数组替代DataFrame查询
+    3. 预计算分子索引范围
+    4. 预归一化数据
+    5. 移除不必要的字段
     """
-    # 使用正则表达式找到科学计数法格式
-    pattern = r"([+-]?\d*\.?\d*)[eE]([+-]?\d+)"
-    match = re.match(pattern, value)
 
-    if match:
-        num = match.group(1)
-        exp = match.group(2)
-
-        # 修复各种小数点格式问题
-        if num == "" or num in ["+", "-"]:
-            num = num + "1"
-        elif num.endswith("."):
-            num = num + "0"
-        elif num.startswith(".") and not num.startswith("-."):
-            num = "0" + num
-        elif num.startswith("-."):
-            num = "-0." + num[2:]
-
-        return f"{num}e{exp}"
-
-    return value
-
-
-def clean_scientific_notation(value):
-    """
-    更健壮的清理函数，处理各种边缘情况
-    """
-    if pd.isna(value):
-        return value
-
-    str_value = str(value).strip()
-
-    # 如果已经是数字，直接返回
-    try:
-        float(str_value)
-        return str_value
-    except ValueError:
-        pass
-
-    # 常见的非标准科学计数法模式
-    patterns = [
-        # 模式1: 数字E/e^数字（如 -6.E^-6）
-        (r"([+-]?\d*\.?\d*)[Ee]\^([+-]?\d+)", r"\1e\2"),
-        # 模式2: 数字E/e^+数字（如 1.23E^+4）
-        (r"([+-]?\d*\.?\d*)[Ee]\^\+(\d+)", r"\1e+\2"),
-        # 模式3: 数字E/e^-数字（如 5.67e^-3）
-        (r"([+-]?\d*\.?\d*)[Ee]\^-(\d+)", r"\1e-\2"),
-        # 模式4: 数字E/e数字（没有^，但可能有问题）
-        (r"([+-]?\d*\.?\d*)[Ee](\d+)", r"\1e\2"),
-    ]
-
-    original = str_value
-    for pattern, replacement in patterns:
-        cleaned = re.sub(pattern, replacement, original)
-        if cleaned != original:
-            # 修复基数部分的小数点问题
-            cleaned = fix_decimal_point(cleaned)
-            return cleaned
-
-    # 如果正则表达式没有匹配，尝试简单替换
-    if "^" in str_value:
-        cleaned = str_value.replace("^", "")
-        cleaned = fix_decimal_point(cleaned)
-        return cleaned
-
-    return str_value
-
-
-def clean_dataframe_scientific_notation(df):
-    """
-    清理DataFrame中所有列的非标准科学计数法
-    """
-    cleaned_df = df.copy()
-
-    for col in cleaned_df.columns:
-        # 只处理字符串类型的列
-        if cleaned_df[col].dtype == object:
-            cleaned_df[col] = cleaned_df[col].apply(clean_scientific_notation)
-
-    return cleaned_df
-
-
-def safe_convert_to_numeric(series):
-    """
-    安全地将序列转换为数值类型
-    """
-    # 先清理科学计数法
-    cleaned_series = series.apply(clean_scientific_notation)
-
-    # 转换为数值，无法转换的设为NaN
-    numeric_series = pd.to_numeric(cleaned_series, errors="coerce")
-
-    return numeric_series
-
-
-class PointCloudQM9Dataset(Dataset):
-    """
-    点云QM9数据集类，用于处理和加载分子点云数据。
-
-    该类继承自`torch.utils.data.Dataset`，提供了从CSV文件读取点云数据的功能，并支持数据变换。
-    它主要用于处理包含分子结构信息的数据集，例如QM9数据集。通过提供分子ID、坐标、节点特征等信息，
-    可以方便地进行分子性质预测任务。
-
-    参数:
-        points_csv: str
-            点云CSV文件路径。
-        indices_csv: str
-            索引CSV文件路径。
-        transform: Optional[callable]
-            数据变换函数，默认为None。
-        target_column: str
-            目标列名，默认为"internal_energy"。
-        node_features: List[str]
-            节点特征列名列表，默认为None，自动推断。
-        device: str
-            设备，默认为"cpu"。
-
-    方法:
-        __len__
-            返回数据集大小。
-        __getitem__
-            获取单个样本。
-        get_molecule_by_id
-            通过分子ID获取分子数据。
-        get_molecule_smiles
-            获取分子的SMILES表示（如果有）。
-    """
+    # 原子元素到相对原子质量的映射 (g/mol)
+    ATOMIC_MASSES = {
+        "H": 1.00794,
+        "C": 12.0107,
+        "N": 14.0067,
+        "O": 15.9994,
+        "F": 18.9984032,
+    }
 
     def __init__(
         self,
-        points_csv: str,
-        indices_csv: str,
-        transform: Optional[callable] = None,
-        target_column: str = "energy",
-        node_features: List[str] = None,
-        clean_scientific_notation: bool = True,
+        atoms_csv_path: str = "qm9_atoms.csv",
+        energy_csv_path: str = "qm9_energy.csv",
+        target_column: str = "atomization_energy",
         device: str = "cpu",
+        transform: Optional[callable] = None,
+        normalize_mass_charge: bool = True,
+        normalize_target: bool = True,  # 新增：控制target归一化
+        normalize_pos: bool = False,
+        center_pos: bool = True,
+        cache_dir: str = "./qm9_cache",
+        force_reload: bool = False,
     ):
         """
-        Initializes a dataset for molecular data, loading points and indices from CSV files.
+        初始化优化的QM9数据集
 
-        Summary:
-        This class is designed to load and process molecular data for machine learning tasks. It initializes with paths to
-        CSV files containing point cloud data and indices, allowing for transformations and target column specification.
-        The dataset supports automatic detection of node features if not provided explicitly.
-
-        Parameters:
-        - points_csv (str): Path to the CSV file containing point cloud data.
-        - indices_csv (str): Path to the CSV file containing indices information.
-        - transform (Optional[callable]): An optional transformation to be applied on the loaded data.
-        - target_column (str): The name of the column in the dataset that is used as the target or label.
-        - node_features (List[str]): A list of column names in the points CSV to be treated as node features. If not provided,
-          it will automatically infer the node features excluding certain columns.
-        - device (str): The device to which the data should be moved after loading. Default is "cpu".
-
-        Attributes:
-        - points_df (DataFrame): DataFrame containing the point cloud data.
-        - indices_df (DataFrame): DataFrame containing the indices data, indexed by molecule_id for quick access.
-        - molecule_ids (List[int]): List of unique molecule IDs present in the indices data.
-        - num_molecules (int): Number of unique molecules in the dataset.
-        - node_features (List[str]): List of feature column names used as node attributes.
-        - device (str): Device on which the data is to be processed.
+        参数:
+            normalize_mass_charge: 是否对mass和charge进行归一化 (默认为True)
         """
         super().__init__()
 
-        self.points_csv = points_csv
-        self.indices_csv = indices_csv
-        self.transform = transform
+        self.atoms_csv_path = atoms_csv_path
+        self.energy_csv_path = energy_csv_path
         self.target_column = target_column
         self.device = device
-        self.clean_scientific_notation = clean_scientific_notation
+        self.transform = transform
+        self.normalize_mass_charge = normalize_mass_charge
+        self.normalize_pos = normalize_pos
+        self.center_pos = center_pos
+        self.cache_dir = cache_dir
+        self.normalize_target = normalize_target
 
-        # 读取数据
-        print("正在读取点云数据...")
-        self.points_df = pd.read_csv(points_csv, low_memory=False)
-        print("正在读取索引数据...")
-        self.indices_df = pd.read_csv(indices_csv, low_memory=False)
+        # 创建缓存目录
+        os.makedirs(cache_dir, exist_ok=True)
 
-        # 如果需要，清理非标准科学计数法
-        if clean_scientific_notation:
-            print("正在清理非标准科学计数法...")
-            self.points_df = clean_dataframe_scientific_notation(self.points_df)
-            self.indices_df = clean_dataframe_scientific_notation(self.indices_df)
+        # 缓存文件名
+        cache_file = os.path.join(cache_dir, f"dataset_cache_{target_column}.pkl")
 
-        # 确保目标列是数值类型
-        if target_column in self.indices_df.columns:
-            self.indices_df[target_column] = safe_convert_to_numeric(
-                self.indices_df[target_column]
-            )
-        else:
-            raise ValueError(
-                f"目标列 '{target_column}' 不存在于索引文件中。可用列: {self.indices_df.columns.tolist()}"
-            )
+        # 尝试加载缓存
+        if not force_reload and os.path.exists(cache_file):
+            print(f"正在从缓存加载数据集: {cache_file}")
+            try:
+                self._load_from_cache(cache_file)
+                print(f"缓存加载成功: {self.num_molecules} 个分子")
+                return
+            except Exception as e:
+                print(f"缓存加载失败: {e}，重新从CSV加载")
 
-        # 设置索引
-        self.indices_df.set_index("molecule_id", inplace=True)
+        # 从CSV加载并构建缓存
+        print("正在从CSV文件加载并构建缓存...")
+        self._load_and_process_data()
+        self._save_to_cache(cache_file)
 
-        # 获取所有唯一的分子ID
-        self.molecule_ids = sorted(self.indices_df.index.unique())
+    def _load_and_process_data(self):
+        """加载并处理数据，构建高效的数据结构"""
+        print(f"正在加载原子数据: {self.atoms_csv_path}")
+        atoms_df = pd.read_csv(self.atoms_csv_path)
+
+        print(f"正在加载能量数据: {self.energy_csv_path}")
+        energy_df = pd.read_csv(self.energy_csv_path)
+
+        # 添加原子质量列
+        atoms_df["mass"] = atoms_df["element"].map(self.ATOMIC_MASSES)
+
+        # 处理未知元素
+        unknown_mask = atoms_df["mass"].isna()
+        if unknown_mask.any():
+            default_mass = 12.0  # 默认碳原子质量
+            atoms_df.loc[unknown_mask, "mass"] = default_mass
+            unknown_elements = atoms_df.loc[unknown_mask, "element"].unique()
+            print(f"警告: 为未知元素设置默认质量 {default_mass}: {unknown_elements}")
+
+        # 获取所有唯一的分子ID并排序
+        self.molecule_ids = sorted(atoms_df["mol_id"].unique())
         self.num_molecules = len(self.molecule_ids)
 
-        # 如果没有指定节点特征，自动推断
-        if node_features is None:
-            exclude_cols = ["molecule_id", "atom_index", "x", "y", "z"]
-            self.node_features = [
-                col for col in self.points_df.columns if col not in exclude_cols
-            ]
-        else:
-            self.node_features = node_features
+        # 预处理数据：转换为numpy数组并预计算统计信息
+        print("正在预处理数据...")
 
-        print(f"数据集包含 {self.num_molecules} 个分子")
-        print(f"节点特征: {self.node_features}")
+        # 预计算每个分子的原子索引范围
+        self.atom_ranges = []
+        self.molecule_targets = []
+        self.molecule_atom_counts = []
 
-        # 统计信息
-        self._compute_statistics()
+        # 构建索引映射，避免重复查询
+        atoms_by_molecule = atoms_df.groupby("mol_id")
 
-    def _compute_statistics(self):
-        """计算数据集的统计信息"""
-        # 分子大小统计
-        molecule_sizes = []
+        # 收集所有位置和特征数据
+        all_positions = []
+        all_features = []
+
         for mol_id in self.molecule_ids:
-            num_atoms = self.indices_df.loc[mol_id, "num_atoms"]
-            molecule_sizes.append(num_atoms)
+            mol_atoms = atoms_by_molecule.get_group(mol_id)
 
-        self.max_atoms = max(molecule_sizes)
-        self.min_atoms = min(molecule_sizes)
-        self.avg_atoms = np.mean(molecule_sizes)
+            # 确保原子按索引排序
+            mol_atoms = mol_atoms.sort_values("atom_index")
 
-        print(
-            f"分子大小统计: 最大={self.max_atoms}, 最小={self.min_atoms}, 平均={self.avg_atoms:.2f}"
-        )
+            # 收集位置
+            pos = mol_atoms[["x", "y", "z"]].values.astype(np.float32)
+            all_positions.append(pos)
 
-        # 特征统计
-        self.feature_stats = {}
-        for feature in self.node_features:
-            if feature in self.points_df.columns:
-                feature_series = safe_convert_to_numeric(self.points_df[feature])
-                self.feature_stats[feature] = {
-                    "mean": float(feature_series.mean()),
-                    "std": float(feature_series.std()),
-                    "min": float(feature_series.min()),
-                    "max": float(feature_series.max()),
-                }
+            # 收集特征：mass和charge
+            mass = mol_atoms["mass"].values.astype(np.float32).reshape(-1, 1)
+            charge = mol_atoms["charge"].values.astype(np.float32).reshape(-1, 1)
+            features = np.concatenate([mass, charge], axis=1)
+            all_features.append(features)
+
+            # 记录原子范围
+            start_idx = len(all_positions) - 1
+            atom_count = len(pos)
+            self.atom_ranges.append((start_idx, atom_count))
+            self.molecule_atom_counts.append(atom_count)
+
+            # 获取目标值
+            target_row = energy_df[energy_df["mol_id"] == mol_id]
+            if not target_row.empty:
+                target_val = target_row[self.target_column].iloc[0]
+                if pd.isna(target_val):
+                    target_val = 0.0  # 处理NaN值
+                self.molecule_targets.append(float(target_val))
+            else:
+                self.molecule_targets.append(0.0)  # 默认值
+                print(f"警告: 分子 {mol_id} 没有目标值")
+
+        # 转换为numpy数组列表（已预先分分子）
+        self.all_positions = all_positions
+        self.all_features = all_features
+        self.molecule_targets = np.array(self.molecule_targets, dtype=np.float32)
+        self.molecule_atom_counts = np.array(self.molecule_atom_counts, dtype=np.int32)
+
+        # 计算统计信息
+        self._compute_statistics(atoms_df, self.molecule_targets)
+
+        print(f"数据预处理完成: {self.num_molecules} 个分子")
+
+    def _compute_statistics(self, atoms_df, targets):
+        """计算统计信息"""
+        print("正在计算统计信息...")
+
+        # 位置统计
+        all_positions = atoms_df[["x", "y", "z"]].values
+        self.pos_mean = np.mean(all_positions, axis=0, dtype=np.float32)
+        self.pos_std = np.std(all_positions, axis=0, dtype=np.float32)
+        self.pos_std = np.where(self.pos_std == 0, 1.0, self.pos_std)
+
+        # mass和charge统计（用于归一化）
+        self.mass_mean = float(atoms_df["mass"].mean())
+        self.mass_std = float(atoms_df["mass"].std())
+        self.mass_std = self.mass_std if self.mass_std != 0 else 1.0
+
+        self.charge_mean = float(atoms_df["charge"].mean())
+        self.charge_std = float(atoms_df["charge"].std())
+        self.charge_std = self.charge_std if self.charge_std != 0 else 1.0
 
         # 目标值统计
-        self.target_stats = {}
-        if self.target_column in self.indices_df.columns:
-            target_series = self.indices_df[self.target_column]
-            self.target_stats = {
-                "mean": float(target_series.mean()),
-                "std": float(target_series.std()),
-                "min": float(target_series.min()),
-                "max": float(target_series.max()),
-                "median": float(target_series.median()),
-            }
+        self.target_mean = float(np.mean(targets))
+        self.target_std = float(np.std(targets))
+        self.target_std = self.target_std if self.target_std != 0 else 1.0
 
-            # 计算四分位距
-            q1 = float(target_series.quantile(0.25))
-            q3 = float(target_series.quantile(0.75))
-            self.target_stats["iqr"] = q3 - q1
+        # 分子大小统计
+        self.max_atoms = int(self.molecule_atom_counts.max())
+        self.min_atoms = int(self.molecule_atom_counts.min())
+        self.avg_atoms = float(self.molecule_atom_counts.mean())
 
-            print(
-                f"目标值统计: 均值={self.target_stats['mean']:.4f}, "
-                f"标准差={self.target_stats['std']:.4f}, "
-                f"范围=[{self.target_stats['min']:.4f}, {self.target_stats['max']:.4f}]"
-            )
+        print(f"位置统计: 均值={self.pos_mean}, 标准差={self.pos_std}")
+        print(f"质量统计: 均值={self.mass_mean:.4f}, 标准差={self.mass_std:.4f}")
+        print(f"电荷统计: 均值={self.charge_mean:.4f}, 标准差={self.charge_std:.4f}")
+        print(f"目标值统计: 均值={self.target_mean:.4f}, 标准差={self.target_std:.4f}")
+        print(
+            f"分子大小: 最大={self.max_atoms}, 最小={self.min_atoms}, 平均={self.avg_atoms:.2f}"
+        )
+
+        # 预归一化数据（如果启用）
+        if self.normalize_mass_charge:
+            print("正在预归一化mass和charge特征...")
+            for i in range(self.num_molecules):
+                features = self.all_features[i]
+                if features.shape[1] >= 2:
+                    # 归一化mass
+                    features[:, 0] = (features[:, 0] - self.mass_mean) / self.mass_std
+                    # 归一化charge
+                    features[:, 1] = (
+                        features[:, 1] - self.charge_mean
+                    ) / self.charge_std
+                    self.all_features[i] = features
+
+        if self.normalize_pos:
+            print("正在预归一化位置数据...")
+            for i in range(self.num_molecules):
+                pos = self.all_positions[i]
+                pos = (pos - self.pos_mean) / self.pos_std
+                self.all_positions[i] = pos
+
+        # 仅在启用时归一化target
+        if self.normalize_target:
+            self.molecule_targets = (
+                self.molecule_targets - self.target_mean
+            ) / self.target_std
+        else:
+            # 如果不归一化，直接使用原始值
+            self.molecule_targets = targets
+
+    def _save_to_cache(self, cache_file: str):
+        """保存处理后的数据到缓存"""
+        print(f"正在保存数据到缓存: {cache_file}")
+
+        cache_data = {
+            "molecule_ids": self.molecule_ids,
+            "num_molecules": self.num_molecules,
+            "all_positions": self.all_positions,
+            "all_features": self.all_features,
+            "molecule_targets": self.molecule_targets,
+            "molecule_atom_counts": self.molecule_atom_counts,
+            "atom_ranges": self.atom_ranges,
+            "pos_mean": self.pos_mean,
+            "pos_std": self.pos_std,
+            "mass_mean": self.mass_mean,
+            "mass_std": self.mass_std,
+            "charge_mean": self.charge_mean,
+            "charge_std": self.charge_std,
+            "target_mean": self.target_mean,
+            "target_std": self.target_std,
+            "max_atoms": self.max_atoms,
+            "min_atoms": self.min_atoms,
+            "avg_atoms": self.avg_atoms,
+            "normalize_mass_charge": self.normalize_mass_charge,
+            "normalize_pos": self.normalize_pos,
+            "center_pos": self.center_pos,
+        }
+
+        with open(cache_file, "wb") as f:
+            pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        print(f"缓存保存完成: {os.path.getsize(cache_file) / (1024 * 1024):.2f} MB")
+
+    def _load_from_cache(self, cache_file: str):
+        """从缓存加载数据"""
+        with open(cache_file, "rb") as f:
+            cache_data = pickle.load(f)
+
+        # 恢复所有属性
+        for key, value in cache_data.items():
+            setattr(self, key, value)
 
     def __len__(self) -> int:
-        """返回数据集大小"""
+        """返回数据集中的分子数量"""
         return self.num_molecules
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
-        获取单个样本
+        获取单个分子的数据（已优化，速度极快）
 
         返回:
             Dictionary containing:
-            - 'pos': 点坐标 (n_atoms, 3)
-            - 'x': 节点特征 (n_atoms, n_features)
-            - 'y': 目标值 (1,)
-            - 'batch': 批处理索引 (n_atoms,)
+            - 'pos': 原子坐标 (n_atoms, 3)
+            - 'x': 节点特征 (n_atoms, 2) [mass, charge]
+            - 'y': 目标值 (1,) [原子化能]
+            - 'batch': 批次索引 (n_atoms,) [所有原子都属于同一个分子]
             - 'num_atoms': 原子数 (1,)
         """
-        # 获取分子ID
-        mol_id = self.molecule_ids[idx]
+        # 直接从预加载的数组中获取数据
+        pos = self.all_positions[idx].copy()  # 使用copy避免原地修改
+        x = self.all_features[idx].copy()
+        y = self.molecule_targets[idx]
+        num_atoms = self.molecule_atom_counts[idx]
 
-        # 获取该分子的所有点
-        molecule_points = self.points_df[self.points_df["molecule_id"] == mol_id]
+        # 中心化位置（如果需要）
+        if self.center_pos:
+            pos = pos - pos.mean(axis=0, keepdims=True)
 
-        # 获取原子坐标
-        pos = molecule_points[["x", "y", "z"]].values.astype(np.float32)
-
-        # 获取节点特征
-        if self.node_features:
-            x_values = []
-            for feature in self.node_features:
-                if feature in molecule_points.columns:
-                    # 确保特征值是数值类型
-                    feature_values = safe_convert_to_numeric(
-                        molecule_points[feature]
-                    ).values.astype(np.float32)
-                    x_values.append(feature_values)
-            if x_values:
-                x = np.column_stack(x_values)
-            else:
-                x = np.zeros((len(pos), 0), dtype=np.float32)
-        else:
-            x = np.zeros((len(pos), 0), dtype=np.float32)
-
-        # 获取目标值
-        y = np.array(
-            [self.indices_df.loc[mol_id, self.target_column]], dtype=np.float32
-        )
-
-        # 获取原子数
-        num_atoms = np.array([len(pos)], dtype=np.int64)
+        # 创建批次索引
+        batch = np.full((num_atoms,), idx, dtype=np.int64)
 
         # 转换为张量
         sample = {
             "pos": torch.tensor(pos, dtype=torch.float32),
             "x": torch.tensor(x, dtype=torch.float32),
-            "y": torch.tensor(y, dtype=torch.float32),
-            "num_atoms": torch.tensor(num_atoms, dtype=torch.long),
+            "y": torch.tensor([y], dtype=torch.float32),
+            "batch": torch.tensor(batch, dtype=torch.long),
+            "num_atoms": torch.tensor([num_atoms], dtype=torch.long),
         }
 
-        # 应用变换
+        # 应用额外的变换（如果有）
         if self.transform:
             sample = self.transform(sample)
 
         return sample
 
-    def get_molecule_by_id(self, mol_id: int) -> Dict[str, torch.Tensor]:
-        """通过分子ID获取分子数据"""
+    def get_molecule_info(self, mol_id: str) -> Dict:
+        """获取分子的详细信息"""
+        if mol_id not in self.molecule_ids:
+            raise ValueError(f"分子ID {mol_id} 不存在")
+
         idx = self.molecule_ids.index(mol_id)
-        return self[idx]
+        pos = self.all_positions[idx]
+        features = self.all_features[idx]
 
-    def get_molecule_smiles(self, mol_id: int) -> Optional[str]:
-        """获取分子的SMILES表示（如果有）"""
-        if "smiles" in self.indices_df.columns:
-            return self.indices_df.loc[mol_id, "smiles"]
-        return None
+        info = {
+            "mol_id": mol_id,
+            "num_atoms": self.molecule_atom_counts[idx],
+            "positions": pos.tolist(),
+            "mass": features[:, 0].tolist() if features.shape[1] > 0 else [],
+            "charge": features[:, 1].tolist() if features.shape[1] > 1 else [],
+            "target": float(self.molecule_targets[idx]),
+        }
+
+        return info
 
 
-class PointCloudCollater:
+class OptimizedQM9Collater:
     """
-    点云数据批处理collator
-    处理不同大小点云的批次
+    优化的QM9数据批处理collator
+    移除了不必要的字段，只保留核心信息
     """
-
-    def __init__(self, follow_batch: List[str] = None):
-        """
-        初始化collator
-
-        参数:
-            follow_batch: 需要跟踪批次索引的键
-        """
-        self.follow_batch = follow_batch or []
 
     def __call__(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
         """
@@ -377,428 +352,122 @@ class PointCloudCollater:
             batch: 样本列表
 
         返回:
-            批处理后的字典
+            批处理后的字典，仅包含必要字段
         """
         batch_dict = {}
 
-        # 处理每种类型的张量
-        for key in batch[0].keys():
-            if key == "num_atoms":
-                # 原子数直接堆叠
-                batch_dict[key] = torch.cat([item[key] for item in batch], dim=0)
-            elif key == "y":
-                # 目标值堆叠
-                batch_dict[key] = torch.cat([item[key] for item in batch], dim=0)
-            elif key in ["pos", "x"]:
-                # 坐标和特征拼接，并创建批次索引
-                values = [item[key] for item in batch]
-                batch_dict[key] = torch.cat(values, dim=0)
+        # 处理位置坐标
+        pos_values = [item["pos"] for item in batch]
+        batch_dict["pos"] = torch.cat(pos_values, dim=0)
 
-                # 创建批次索引
-                batch_indices = []
-                for i, val in enumerate(values):
-                    batch_indices.extend([i] * len(val))
-                batch_dict[f"{key}_batch"] = torch.tensor(
-                    batch_indices, dtype=torch.long
-                )
+        # 处理特征
+        x_values = [item["x"] for item in batch]
+        batch_dict["x"] = torch.cat(x_values, dim=0)
 
-        # 计算总原子数
-        batch_dict["total_atoms"] = torch.sum(batch_dict["num_atoms"])
+        # 处理目标值
+        y_values = [item["y"] for item in batch]
+        batch_dict["y"] = torch.cat(y_values, dim=0)
+
+        # 处理原子数
+        num_atoms = [item["num_atoms"] for item in batch]
+        batch_dict["num_atoms"] = torch.cat(num_atoms, dim=0)
+
+        # 创建批次索引（这是必要的，用于区分不同分子）
+        batch_indices = []
+        for i, pos in enumerate(pos_values):
+            batch_indices.extend([i] * len(pos))
+        batch_dict["batch"] = torch.tensor(batch_indices, dtype=torch.long)
 
         return batch_dict
 
 
-class PointCloudTransform:
-    """点云数据变换"""
-
-    def __init__(
-        self,
-        normalize_pos: bool = False,
-        normalize_features: bool = False,
-        normalize_target: bool = False,
-        feature_stats: Dict = None,
-        target_stats: Dict = None,
-        center_pos: bool = True,
-        random_rotate: bool = False,
-        target_key: str = "y",  # 目标值的字典键
-        target_normalization_method: str = "zscore",  # 归一化方法: "zscore", "minmax", "robust"
-        preserve_target_range: bool = False,  # 是否保留目标原始范围（仅对minmax有效）
-    ):
-        """
-        初始化变换
-
-        参数:
-            normalize_pos: 是否标准化坐标
-            normalize_features: 是否标准化特征
-            normalize_target: 是否标准化目标值
-            feature_stats: 特征统计信息
-            target_stats: 目标统计信息
-            center_pos: 是否将点云中心置于原点
-            random_rotate: 是否随机旋转（数据增强）
-            target_key: 目标值在字典中的键
-            target_normalization_method: 目标归一化方法
-            preserve_target_range: 是否保留目标原始范围（用于反向变换）
-        """
-        self.normalize_pos = normalize_pos
-        self.normalize_features = normalize_features
-        self.normalize_target = normalize_target
-        self.feature_stats = feature_stats or {}
-        self.target_stats = target_stats or {}
-        self.center_pos = center_pos
-        self.random_rotate = random_rotate
-        self.target_key = target_key
-        self.target_normalization_method = target_normalization_method
-        self.preserve_target_range = preserve_target_range
-
-        # 验证归一化方法
-        valid_methods = ["zscore", "minmax", "robust", "log", "quantile"]
-        if target_normalization_method not in valid_methods:
-            raise ValueError(
-                f"无效的归一化方法: {target_normalization_method}. 可选方法: {valid_methods}"
-            )
-
-    def __call__(self, sample: Dict) -> Dict:
-        """应用变换"""
-        # 一个样本是一个点云
-        pos = sample["pos"]  # 位置 x, y, z
-        x = sample["x"]
-
-        # 1. 中心化点云
-        if self.center_pos:
-            pos_mean = pos.mean(dim=0, keepdim=True)
-            pos = pos - pos_mean
-
-        # 2. 标准化坐标
-        if self.normalize_pos:
-            pos_std = pos.std(dim=0, keepdim=True)
-            pos_std = torch.where(pos_std == 0, torch.ones_like(pos_std), pos_std)
-            pos = pos / pos_std
-
-        # 3. 标准化特征
-        if self.normalize_features and self.feature_stats:
-            for i, feature in enumerate(self.feature_stats.keys()):
-                if i < x.shape[1]:  # 确保索引在范围内
-                    stats = self.feature_stats[feature]
-                    if "mean" in stats and "std" in stats:
-                        mean = torch.tensor(stats["mean"], dtype=torch.float32)
-                        std = torch.tensor(stats["std"], dtype=torch.float32)
-                        if std == 0:
-                            std = torch.tensor(1.0, dtype=torch.float32)
-                        x[:, i] = (x[:, i] - mean) / std
-
-        # 4. 标准化目标值（如果存在）
-        if self.normalize_target and self.target_key in sample:
-            target = sample[self.target_key]
-            stats = self.target_stats
-
-            if self.target_normalization_method == "zscore":
-                # Z-score标准化: (x - mean) / std
-                if "mean" in stats and "std" in stats:
-                    mean = torch.tensor(stats["mean"], dtype=torch.float32)
-                    std = torch.tensor(stats["std"], dtype=torch.float32)
-                    if std == 0:
-                        std = torch.tensor(1.0, dtype=torch.float32)
-                    target = (target - mean) / std
-
-            elif self.target_normalization_method == "minmax":
-                # 最小-最大归一化: (x - min) / (max - min)
-                if "min" in stats and "max" in stats:
-                    min_val = torch.tensor(stats["min"], dtype=torch.float32)
-                    max_val = torch.tensor(stats["max"], dtype=torch.float32)
-                    range_val = max_val - min_val
-                    if range_val == 0:
-                        range_val = torch.tensor(1.0, dtype=torch.float32)
-                    target = (target - min_val) / range_val
-
-                    # 可选：缩放到[0, 1]范围之外
-                    if "target_min" in stats and "target_max" in stats:
-                        new_min = torch.tensor(stats["target_min"], dtype=torch.float32)
-                        new_max = torch.tensor(stats["target_max"], dtype=torch.float32)
-                        target = target * (new_max - new_min) + new_min
-
-            elif self.target_normalization_method == "robust":
-                # 鲁棒归一化: (x - median) / IQR
-                if "median" in stats and "iqr" in stats:
-                    median = torch.tensor(stats["median"], dtype=torch.float32)
-                    iqr = torch.tensor(stats["iqr"], dtype=torch.float32)
-                    if iqr == 0:
-                        iqr = torch.tensor(1.0, dtype=torch.float32)
-                    target = (target - median) / iqr
-
-            elif self.target_normalization_method == "log":
-                # 对数变换: log(x + eps)
-                eps = stats.get("eps", 1e-8)
-                if "shift" in stats:  # 如果有偏移量
-                    target = target + stats["shift"]
-                target = torch.log(target + eps)
-
-            elif self.target_normalization_method == "quantile":
-                # 分位数归一化（需要预计算的分位数映射）
-                if "quantile_mapping" in stats:
-                    # 这里简化为使用预计算的均值和标准差
-                    if "mean" in stats and "std" in stats:
-                        mean = torch.tensor(stats["mean"], dtype=torch.float32)
-                        std = torch.tensor(stats["std"], dtype=torch.float32)
-                        if std == 0:
-                            std = torch.tensor(1.0, dtype=torch.float32)
-                        target = (target - mean) / std
-
-            # 保存原始目标值以便反向变换
-            if self.preserve_target_range:
-                sample[f"{self.target_key}_original"] = sample[self.target_key].clone()
-
-            # 更新归一化后的目标值
-            sample[self.target_key] = target
-
-        # 5. 随机旋转（数据增强）
-        if self.random_rotate and torch.rand(1) > 0.5:
-            # 生成随机旋转矩阵
-            angle = torch.rand(1) * 2 * torch.pi
-            cos_a, sin_a = torch.cos(angle), torch.sin(angle)
-
-            # 2D旋转（绕z轴）
-            rotation_matrix = torch.tensor(
-                [[cos_a, -sin_a, 0], [sin_a, cos_a, 0], [0, 0, 1]], dtype=torch.float32
-            )
-
-            pos = torch.matmul(pos, rotation_matrix.T)
-
-        sample["pos"] = pos
-        sample["x"] = x
-
-        return sample
-
-    def inverse_transform_target(self, normalized_target: torch.Tensor) -> torch.Tensor:
-        """将归一化的目标值反向变换回原始尺度"""
-        if not self.normalize_target or not self.target_stats:
-            return normalized_target
-
-        stats = self.target_stats
-
-        if self.target_normalization_method == "zscore":
-            if "mean" in stats and "std" in stats:
-                mean = torch.tensor(stats["mean"], dtype=torch.float32)
-                std = torch.tensor(stats["std"], dtype=torch.float32)
-                if std == 0:
-                    std = torch.tensor(1.0, dtype=torch.float32)
-                return normalized_target * std + mean
-
-        elif self.target_normalization_method == "minmax":
-            if "min" in stats and "max" in stats:
-                min_val = torch.tensor(stats["min"], dtype=torch.float32)
-                max_val = torch.tensor(stats["max"], dtype=torch.float32)
-                range_val = max_val - min_val
-                if range_val == 0:
-                    range_val = torch.tensor(1.0, dtype=torch.float32)
-
-                # 如果缩放过范围
-                if "target_min" in stats and "target_max" in stats:
-                    new_min = torch.tensor(stats["target_min"], dtype=torch.float32)
-                    new_max = torch.tensor(stats["target_max"], dtype=torch.float32)
-                    # 先缩放到[0, 1]
-                    normalized_target = (normalized_target - new_min) / (
-                        new_max - new_min
-                    )
-
-                return normalized_target * range_val + min_val
-
-        elif self.target_normalization_method == "robust":
-            if "median" in stats and "iqr" in stats:
-                median = torch.tensor(stats["median"], dtype=torch.float32)
-                iqr = torch.tensor(stats["iqr"], dtype=torch.float32)
-                if iqr == 0:
-                    iqr = torch.tensor(1.0, dtype=torch.float32)
-                return normalized_target * iqr + median
-
-        elif self.target_normalization_method == "log":
-            eps = stats.get("eps", 1e-8)
-            result = torch.exp(normalized_target) - eps
-            if "shift" in stats:
-                result = result - stats["shift"]
-            return result
-
-        elif self.target_normalization_method == "quantile":
-            # 分位数归一化的逆变换较复杂，这里简化为Z-score逆变换
-            if "mean" in stats and "std" in stats:
-                mean = torch.tensor(stats["mean"], dtype=torch.float32)
-                std = torch.tensor(stats["std"], dtype=torch.float32)
-                if std == 0:
-                    std = torch.tensor(1.0, dtype=torch.float32)
-                return normalized_target * std + mean
-
-        # 如果无法逆变换，返回原始值
-        return normalized_target
-
-    @staticmethod
-    def compute_target_stats(
-        targets: List[torch.Tensor], method: str = "zscore", **kwargs
-    ) -> Dict:
-        """
-        计算目标值的统计信息
-
-        参数:
-            targets: 目标值列表
-            method: 归一化方法
-            **kwargs: 其他参数
-        """
-        if not targets:
-            return {}
-
-        # 合并所有目标值
-        all_targets = torch.cat(targets)
-
-        stats = {}
-
-        if method == "zscore":
-            stats["mean"] = float(all_targets.mean().item())
-            stats["std"] = float(all_targets.std().item())
-
-        elif method == "minmax":
-            stats["min"] = float(all_targets.min().item())
-            stats["max"] = float(all_targets.max().item())
-
-            # 可选的自定义范围
-            target_min = kwargs.get("target_min", 0.0)
-            target_max = kwargs.get("target_max", 1.0)
-            if target_min != 0.0 or target_max != 1.0:
-                stats["target_min"] = target_min
-                stats["target_max"] = target_max
-
-        elif method == "robust":
-            stats["median"] = float(torch.median(all_targets).item())
-
-            # 计算四分位距
-            q75, q25 = (
-                torch.quantile(all_targets, 0.75),
-                torch.quantile(all_targets, 0.25),
-            )
-            stats["iqr"] = float((q75 - q25).item())
-
-        elif method == "log":
-            # 确保所有值都是正数
-            min_val = all_targets.min().item()
-            if min_val <= 0:
-                shift = abs(min_val) + kwargs.get("eps", 1e-8)
-                stats["shift"] = shift
-                all_targets = all_targets + shift
-            stats["eps"] = kwargs.get("eps", 1e-8)
-
-        elif method == "quantile":
-            # 计算分位数映射（简化版本）
-            stats["mean"] = float(all_targets.mean().item())
-            stats["std"] = float(all_targets.std().item())
-
-            # 实际应用中可能需要更复杂的分位数映射
-            quantiles = kwargs.get("quantiles", 100)
-            stats["quantiles"] = torch.quantile(
-                all_targets, torch.linspace(0, 1, quantiles)
-            ).tolist()
-
-        return stats
-
-
-def compute_dataset_target_stats(
-    dataset: PointCloudQM9Dataset, target_column: str = None
-) -> Dict:
-    """
-    计算数据集目标列的统计信息
-
-    参数:
-        dataset: PointCloudQM9Dataset实例
-        target_column: 目标列名，如果为None则使用数据集中的target_column
-
-    返回:
-        目标统计信息字典
-    """
-    if target_column is None:
-        target_column = dataset.target_column
-
-    if target_column not in dataset.indices_df.columns:
-        raise ValueError(f"目标列 '{target_column}' 不存在于数据集中")
-
-    target_series = dataset.indices_df[target_column]
-
-    stats = {
-        "mean": float(target_series.mean()),
-        "std": float(target_series.std()),
-        "min": float(target_series.min()),
-        "max": float(target_series.max()),
-        "median": float(target_series.median()),
-    }
-
-    # 计算四分位距
-    q1 = float(target_series.quantile(0.25))
-    q3 = float(target_series.quantile(0.75))
-    stats["iqr"] = q3 - q1
-
-    return stats
-
-
-# 使用示例
+# 使用示例和性能测试
 if __name__ == "__main__":
-    # 数据集路径
-    points_csv = "./qm9.csv"
-    indices_csv = "./qm9_indices.csv"
+    import time
 
-    # 创建完整数据集（不归一化目标值）
-    print("创建数据集...")
-    full_dataset = PointCloudQM9Dataset(
-        points_csv=points_csv,
-        indices_csv=indices_csv,
-        transform=None,  # 先不应用变换
-        target_column="internal_energy",
-        node_features=[
-            "atom_mass",
-            "atom_valence_electrons",
-            "atom_radius",
-            "atom_mulliken_charge",
-        ],
-    )
+    print("测试优化的QM9数据集...")
 
-    # 划分数据集
-    train_size = int(0.8 * len(full_dataset))
-    val_size = int(0.1 * len(full_dataset))
-    test_size = len(full_dataset) - train_size - val_size
+    # 计时开始
+    start_time = time.time()
 
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        full_dataset, [train_size, val_size, test_size]
-    )
-
-    # 从训练集计算目标值统计信息（推荐做法）
-    print("\n计算训练集目标值统计信息...")
-    train_targets = []
-    for i in range(len(train_dataset)):
-        sample = train_dataset[i]
-        train_targets.append(sample["y"])
-
-    train_target_stats = PointCloudTransform.compute_target_stats(
-        train_targets, method="zscore"
-    )
-    print(f"训练集目标统计: {train_target_stats}")
-
-    # 创建transform，使用训练集的统计信息
-    transform = PointCloudTransform(
+    # 创建数据集（首次运行会构建缓存，较慢）
+    dataset = OptimizedQM9Dataset(
+        atoms_csv_path="./QM9/qm9_atoms.csv",
+        energy_csv_path="./QM9/qm9_energy.csv",
+        target_column="atomization_energy",
+        normalize_mass_charge=True,  # 对mass和charge进行归一化
         normalize_pos=False,
         center_pos=True,
-        random_rotate=False,
-        normalize_target=True,
-        target_stats=train_target_stats,
-        target_normalization_method="zscore",
-        preserve_target_range=True,  # 保存原始值以便反向变换
+        cache_dir="./qm9_cache",
+        force_reload=False,  # 设为True可强制重新构建缓存
+        normalize_target=False,
     )
 
-    # 将transform应用到数据集
-    full_dataset.transform = transform
+    load_time = time.time() - start_time
+    print(f"数据集加载时间: {load_time:.2f} 秒")
 
-    # 重新获取变换后的数据集
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        full_dataset, [train_size, val_size, test_size]
+    # 测试获取样本的速度
+    print("\n测试样本获取速度...")
+    test_start = time.time()
+
+    # 获取多个样本
+    test_indices = list(range(min(100, len(dataset))))
+    samples = []
+    for idx in test_indices:
+        sample = dataset[idx]
+        samples.append(sample)
+
+    sample_time = time.time() - test_start
+    print(f"获取 {len(test_indices)} 个样本的时间: {sample_time:.2f} 秒")
+    print(f"平均每个样本: {sample_time / len(test_indices) * 1000:.2f} 毫秒")
+
+    # 检查样本结构
+    sample = dataset[0]
+    print("\n单个样本结构:")
+    for key, value in sample.items():
+        if isinstance(value, torch.Tensor):
+            print(f"  {key}: {value.shape} | dtype: {value.dtype}")
+        else:
+            print(f"  {key}: {value}")
+
+    # 检查mass和charge是否已归一化
+    print("\n检查mass和charge归一化:")
+    print(f"  mass均值: {dataset.mass_mean:.4f}, 标准差: {dataset.mass_std:.4f}")
+    print(f"  charge均值: {dataset.charge_mean:.4f}, 标准差: {dataset.charge_std:.4f}")
+
+    # 验证归一化效果
+    if len(samples) > 0:
+        all_mass = torch.cat([s["x"][:, 0] for s in samples])
+        all_charge = torch.cat([s["x"][:, 1] for s in samples])
+
+        print(
+            f"  归一化后mass均值: {all_mass.mean():.4f}, 标准差: {all_mass.std():.4f}"
+        )
+        print(
+            f"  归一化后charge均值: {all_charge.mean():.4f}, 标准差: {all_charge.std():.4f}"
+        )
+
+    # 创建collator和数据加载器
+    collater = OptimizedQM9Collater()
+
+    # 划分数据集
+    print("\n划分数据集...")
+    total_size = len(dataset)
+    train_size = int(0.8 * total_size)
+    val_size = int(0.1 * total_size)
+    test_size = total_size - train_size - val_size
+
+    from torch.utils.data import random_split
+
+    train_dataset, val_dataset, test_dataset = random_split(
+        dataset, [train_size, val_size, test_size]
     )
 
-    # 创建collator
-    collater = PointCloudCollater(follow_batch=["pos", "x"])
+    print(f"数据集划分: 训练集={train_size}, 验证集={val_size}, 测试集={test_size}")
 
-    # 创建数据加载器
+    # 创建数据加载器并测试性能
+    print("\n测试数据加载器性能...")
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=32,
@@ -808,45 +477,28 @@ if __name__ == "__main__":
         pin_memory=True,
     )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=32,
-        shuffle=False,
-        collate_fn=collater,
-        num_workers=4,
-        pin_memory=True,
-    )
-
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=32,
-        shuffle=False,
-        collate_fn=collater,
-        num_workers=4,
-        pin_memory=True,
-    )
-
-    # 测试数据加载器
-    print("\n测试数据加载器...")
+    # 测试一个批次
+    batch_start = time.time()
     for batch_idx, batch in enumerate(train_loader):
         print(f"\n批次 {batch_idx}:")
-        print(f"  位置形状: {batch['pos'].shape}")  # (总原子数, 3)
-        print(f"  特征形状: {batch['x'].shape}")  # (总原子数, n_features)
-        print(f"  批次索引形状: {batch['pos_batch'].shape}")
-        print(f"  目标形状: {batch['y'].shape}")  # (batch_size, 1)
-        print(f"  原子数: {batch['num_atoms'].shape}")  # (batch_size,)
-        print(f"  总原子数: {batch['total_atoms'].item()}")
+        print(f"  位置形状: {batch['pos'].shape}")
+        print(f"  特征形状: {batch['x'].shape}")
+        print(f"  批次索引形状: {batch['batch'].shape}")
+        print(f"  目标形状: {batch['y'].shape}")
+        print(f"  原子数: {batch['num_atoms'].shape}")
 
-        # 显示归一化后的目标值范围
-        y_min = batch["y"].min().item()
-        y_max = batch["y"].max().item()
-        print(f"  归一化目标值范围: [{y_min:.4f}, {y_max:.4f}]")
+        # 确认没有不必要的字段
+        print(f"  批次中包含的键: {list(batch.keys())}")
 
         if batch_idx >= 2:  # 只查看前3个批次
             break
 
-    print(f"\n数据集划分: 训练集={train_size}, 验证集={val_size}, 测试集={test_size}")
-    print(
-        f"目标值统计信息: 均值={train_target_stats.get('mean', 'N/A'):.4f}, "
-        f"标准差={train_target_stats.get('std', 'N/A'):.4f}"
-    )
+    batch_time = time.time() - batch_start
+    print(f"\n批次处理时间: {batch_time:.2f} 秒")
+
+    # 显示统计信息
+    print("\n数据集统计信息:")
+    print(f"  总分子数: {len(dataset)}")
+    print(f"  最大原子数: {dataset.max_atoms}")
+    print(f"  平均原子数: {dataset.avg_atoms:.2f}")
+    print(f"  是否对mass和charge归一化: {dataset.normalize_mass_charge}")

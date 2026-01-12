@@ -471,10 +471,12 @@ def run_profiling(mode: str = "full", batch_size: int = 32, n_points: int = 128)
     print("SUMMARY")
     print("=" * 80)
     
-    if "gpu_stats" in results:
+    if "gpu_stats" in results and "gpu_util_mean" in results["gpu_stats"]:
         gs = results["gpu_stats"]
         print(f"GPU Utilization: {gs['gpu_util_mean']:.1f}% (min: {gs['gpu_util_min']:.1f}%, max: {gs['gpu_util_max']:.1f}%)")
         print(f"Memory Peak: {gs['memory_peak_mb']:.0f} MB")
+    elif "gpu_stats" in results:
+        print("GPU stats: No samples collected (profiling too fast)")
     
     print(f"\nForward Pass: {results['forward']['forward_time_mean_ms']:.2f}ms ± {results['forward']['forward_time_std_ms']:.2f}ms")
     
@@ -497,7 +499,7 @@ def run_profiling(mode: str = "full", batch_size: int = 32, n_points: int = 128)
     top_bottleneck = sorted_modules[0]
     print(f"⚠ Primary bottleneck: {top_bottleneck['module']} ({top_bottleneck['time_ms']:.2f}ms, {top_bottleneck['time_ms']/total_module_time*100:.1f}%)")
     
-    if "gpu_stats" in results and results["gpu_stats"]["gpu_util_mean"] < 50:
+    if "gpu_stats" in results and "gpu_util_mean" in results["gpu_stats"] and results["gpu_stats"]["gpu_util_mean"] < 50:
         print(f"⚠ Low GPU utilization ({results['gpu_stats']['gpu_util_mean']:.1f}%) indicates CPU-bound or serialization issues")
     
     print()

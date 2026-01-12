@@ -1,0 +1,42 @@
+{
+  "config": {
+    "batch_size": 32,
+    "n_points": 128,
+    "total_points": 4096,
+    "device": "cuda",
+    "timestamp": "2026-01-12T04:00:56.364103"
+  },
+  "forward": {
+    "forward_time_mean_ms": 185.1407576352358,
+    "forward_time_std_ms": 14.364613969178974,
+    "forward_time_min_ms": 163.65748643875122,
+    "forward_time_max_ms": 214.90779146552086,
+    "memory_allocated_mb": 210.4130859375,
+    "memory_peak_mb": 742.29638671875
+  },
+  "modules": [
+    {
+      "module": "PreSelector",
+      "time_ms": 5.980059877038002
+    },
+    {
+      "module": "KNN Selector",
+      "time_ms": 28.108853101730347
+    },
+    {
+      "module": "CoordinateTransformer",
+      "time_ms": 9.633040614426136
+    },
+    {
+      "module": "Kernel (Polynomials)",
+      "time_ms": 6.626831740140915
+    },
+    {
+      "module": "Aggregation",
+      "time_ms": 0.06721001118421555
+    }
+  ],
+  "gpu_stats": {
+    "error": "No stats collected"
+  }
+}

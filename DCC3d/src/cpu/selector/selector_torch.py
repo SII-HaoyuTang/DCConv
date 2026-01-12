@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import TypedDict
+import functools
 
 try:
     from typing import NotRequired
@@ -8,6 +9,9 @@ except ImportError:
     from typing_extensions import NotRequired
 
 import torch
+
+# Check if torch.compile is available (PyTorch 2.0+)
+_USE_TORCH_COMPILE = hasattr(torch, 'compile')
 
 def batch_select_n_points_minimal_variance(
     batch_points: torch.Tensor,  # (B, N, D)
@@ -248,6 +252,42 @@ class BaseSelector(ABC):
         return self.select(coords, indices, conv_num, outpoint_num)
 
 
+def _knn_core_computation(
+    batch_centers: torch.Tensor,  # (B, P, 3)
+    batch_coords: torch.Tensor,   # (B, M, 3)
+    batch_mask: torch.Tensor,     # (B, M)
+    k: int,
+) -> torch.Tensor:
+    """
+    Core KNN computation optimized for GPU.
+    This function is designed to be torch.compile friendly.
+    
+    Returns: topk_local_indices (B, P, k)
+    """
+    # Compute distances: ||c - x||^2 = ||c||^2 + ||x||^2 - 2*c·x
+    centers_sq = torch.sum(batch_centers ** 2, dim=-1, keepdim=True)  # (B, P, 1)
+    coords_sq = torch.sum(batch_coords ** 2, dim=-1, keepdim=True)    # (B, M, 1)
+    centers_coords = torch.einsum("bpc,bmc->bpm", batch_centers, batch_coords)
+    dist_sq = centers_sq + coords_sq.transpose(1, 2) - 2 * centers_coords
+
+    # Mask invalid (padded) points
+    dist_sq = dist_sq.masked_fill(~batch_mask.unsqueeze(1), float("inf"))
+
+    # Select top-k nearest neighbors
+    _, topk_local_indices = torch.topk(dist_sq, k, dim=2, largest=False)
+    
+    return topk_local_indices
+
+
+# Apply torch.compile if available (PyTorch 2.0+)
+if _USE_TORCH_COMPILE:
+    try:
+        _knn_core_computation = torch.compile(_knn_core_computation, mode="reduce-overhead")
+    except Exception:
+        # Fallback if compile fails (e.g., unsupported platform)
+        pass
+
+
 class KNNSelector(BaseSelector):
     """
     基于欧氏距离的 K 近邻 (K-Nearest Neighbors) 选点策略。
@@ -265,7 +305,7 @@ class KNNSelector(BaseSelector):
         belonging: torch.Tensor,
         conv_num: int,
         outpoint_num: int,
-        batch_size: int = 8,  # 根据GPU内存调整
+        batch_size: int = 64,  # Increased for fewer kernel launches
     ) -> torch.Tensor:
         """
         Fully vectorized KNN computation with minimal Python loops.
@@ -355,19 +395,11 @@ class KNNSelector(BaseSelector):
             center_local_coords = batch_coords[batch_idx_expand, local_center_indices]  # (B, P, 3)
             batch_centers = center_local_coords
 
-            # Compute KNN using efficient distance computation
-            # ||c - x||^2 = ||c||^2 + ||x||^2 - 2*c·x
-            centers_sq = torch.sum(batch_centers**2, dim=-1, keepdim=True)  # (B, P, 1)
-            coords_sq = torch.sum(batch_coords**2, dim=-1, keepdim=True)  # (B, M, 1)
-            centers_coords = torch.einsum("bpc,bmc->bpm", batch_centers, batch_coords)
-            dist_sq = centers_sq + coords_sq.transpose(1, 2) - 2 * centers_coords
-
-            # Mask invalid (padded) points
-            dist_sq = dist_sq.masked_fill(~batch_mask.unsqueeze(1), float("inf"))
-
-            # Select top-k nearest neighbors
+            # Use compiled KNN core computation for fused kernel execution
             k = min(conv_num, max_batch_group_size)
-            _, topk_local_indices = torch.topk(dist_sq, k, dim=2, largest=False)
+            topk_local_indices = _knn_core_computation(
+                batch_centers, batch_coords, batch_mask, k
+            )
 
             # Convert to global indices - VECTORIZED
             # Expand batch_global_indices for gathering

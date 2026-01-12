@@ -1,0 +1,143 @@
+{
+  "config": {
+    "batch_size": 64,
+    "n_points": 128,
+    "total_points": 8192,
+    "device": "cuda",
+    "timestamp": "2026-01-12T04:07:31.459911"
+  },
+  "forward": {
+    "forward_time_mean_ms": 258.14017932862043,
+    "forward_time_std_ms": 14.520891811789328,
+    "forward_time_min_ms": 230.79954832792282,
+    "forward_time_max_ms": 277.79426611959934,
+    "memory_allocated_mb": 410.6943359375,
+    "memory_peak_mb": 1473.46044921875
+  },
+  "backward": {
+    "backward_time_mean_ms": 56.967707350850105,
+    "backward_time_std_ms": 0.16140453556601508
+  },
+  "modules": [
+    {
+      "module": "PreSelector",
+      "time_ms": 11.563528701663017
+    },
+    {
+      "module": "KNN Selector",
+      "time_ms": 44.71161961555481
+    },
+    {
+      "module": "CoordinateTransformer",
+      "time_ms": 8.700073137879372
+    },
+    {
+      "module": "Kernel (Polynomials)",
+      "time_ms": 5.458342283964157
+    },
+    {
+      "module": "Aggregation",
+      "time_ms": 0.06648655980825424
+    }
+  ],
+  "torch_profiler": {
+    "top_cuda_ops": [
+      {
+        "name": "aten::_unique2",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.675821000000173,
+        "calls": 9
+      },
+      {
+        "name": "aten::empty",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 17.224954000000253,
+        "calls": 4457
+      },
+      {
+        "name": "Activity Buffer Request",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 3.5490289999999796,
+        "calls": 2
+      },
+      {
+        "name": "cudaMemsetAsync",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.2921550000000061,
+        "calls": 52
+      },
+      {
+        "name": "Memset (Device)",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.0,
+        "calls": 52
+      },
+      {
+        "name": "cudaDeviceGetAttribute",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.9029149999983738,
+        "calls": 3544
+      },
+      {
+        "name": "cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 1.6132730000011106,
+        "calls": 3177
+      },
+      {
+        "name": "cudaLaunchKernel",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 81.02447700000127,
+        "calls": 17055
+      },
+      {
+        "name": "void at_cuda_detail::cub::DeviceRadixSortHistogramKernel<at_cuda_detail::cub::DeviceRadixSortPolicy<long, at_cuda_detail::cub::NullType, unsigned long long>::Policy900, false, long, unsigned long long, at_cuda_detail::cub::detail::identity_decomposer_t>(unsigned long long*, long const*, unsigned long long, int, int, at_cuda_detail::cub::detail::identity_decomposer_t)",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.0,
+        "calls": 2
+      },
+      {
+        "name": "cudaPeekAtLastError",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.07704799999998704,
+        "calls": 796
+      },
+      {
+        "name": "void at_cuda_detail::cub::DeviceRadixSortExclusiveSumKernel<at_cuda_detail::cub::DeviceRadixSortPolicy<long, at_cuda_detail::cub::NullType, unsigned long long>::Policy900, unsigned long long>(unsigned long long*)",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.0,
+        "calls": 2
+      },
+      {
+        "name": "void at_cuda_detail::cub::DeviceRadixSortOnesweepKernel<at_cuda_detail::cub::DeviceRadixSortPolicy<long, at_cuda_detail::cub::NullType, unsigned long long>::Policy900, false, long, at_cuda_detail::cub::NullType, unsigned long long, int, int, at_cuda_detail::cub::detail::identity_decomposer_t>(int*, int*, unsigned long long*, unsigned long long const*, long*, long const*, at_cuda_detail::cub::NullType*, at_cuda_detail::cub::NullType const*, int, int, int, at_cuda_detail::cub::detail::identity_decomposer_t)",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.0,
+        "calls": 16
+      },
+      {
+        "name": "aten::resize_",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 5.518374000000496,
+        "calls": 2170
+      },
+      {
+        "name": "void at_cuda_detail::cub::DeviceCompactInitKernel<at_cuda_detail::cub::ReduceByKeyScanTileState<long, int, true>, long*>(at_cuda_detail::cub::ReduceByKeyScanTileState<long, int, true>, int, long*)",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.0,
+        "calls": 8
+      },
+      {
+        "name": "void at_cuda_detail::cub::DeviceReduceByKeyKernel<at_cuda_detail::cub::detail::device_run_length_encode_policy_hub<long, long>::Policy900, long const*, long*, at_cuda_detail::cub::ConstantInputIterator<long, int>, long*, long*, at_cuda_detail::cub::ReduceByKeyScanTileState<long, int, true>, cuda::std::__4::equal_to<void>, cuda::std::__4::plus<void>, int, long>(long const*, long*, at_cuda_detail::cub::ConstantInputIterator<long, int>, long*, long*, at_cuda_detail::cub::ReduceByKeyScanTileState<long, int, true>, int, cuda::std::__4::equal_to<void>, cuda::std::__4::plus<void>, int)",
+        "cuda_time_ms": 0.0,
+        "cpu_time_ms": 0.0,
+        "calls": 1
+      }
+    ],
+    "total_cuda_time_ms": 0.0,
+    "total_cpu_time_ms": 110.87804600000165,
+    "kernel_count": 31343
+  },
+  "gpu_stats": {
+    "error": "No stats collected"
+  }
+}

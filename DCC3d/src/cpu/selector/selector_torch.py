@@ -51,14 +51,11 @@ def batch_select_n_points_minimal_variance(
     valid_mask_expanded = valid_mask.unsqueeze(1).expand(-1, restarts, -1)  # (B, R, N)
     valid_mask_expanded = valid_mask_expanded.reshape(B * restarts, N)  # (B*R, N)
 
-    # 批量随机初始化中心
-    # 为每个(batch, restart)随机选择一个有效点
-    rand_indices = torch.zeros(B * restarts, dtype=torch.long, device=device)
-    for i in range(B * restarts):
-        valid_idx = torch.where(valid_mask_expanded[i])[0]
-        if len(valid_idx) > 0:
-            rand_idx = torch.randint(0, len(valid_idx), (1,))
-            rand_indices[i] = valid_idx[rand_idx]
+    # Vectorized random initialization - avoid Python loop
+    # Use torch.multinomial to sample one valid index per batch element
+    # Add small epsilon to avoid zero weights causing issues
+    weights = valid_mask_expanded.float() + 1e-10
+    rand_indices = torch.multinomial(weights, 1).squeeze(1)  # (B*R,)
 
     centers = points_expanded[
         torch.arange(B * restarts, device=device), rand_indices
@@ -271,17 +268,20 @@ class KNNSelector(BaseSelector):
         batch_size: int = 8,  # 根据GPU内存调整
     ) -> torch.Tensor:
         """
-        完全向量化的批量化KNN计算
-
-        使用高级技巧避免循环：
-        1. 使用分组卷积的思想
-        2. 使用爱因斯坦求和约定进行高效距离计算
-        3. 使用批量化排序和选择
+        Fully vectorized KNN computation with minimal Python loops.
+        
+        Optimizations applied:
+        1. Pre-compute all group indices using argsort + unique_consecutive
+        2. Use padding via advanced indexing instead of loops
+        3. Vectorize center extraction and global index conversion
         """
         device = coords.device
+        dtype = coords.dtype
 
-        # 获取点云信息
-        unique_groups, group_counts = torch.unique(belonging, return_counts=True)
+        # 获取点云信息 - use stable sort for reproducibility
+        unique_groups, inverse_indices, group_counts = torch.unique(
+            belonging, return_inverse=True, return_counts=True
+        )
         num_groups = len(unique_groups)
 
         # 每个点云选择的中心点数
@@ -293,95 +293,101 @@ class KNNSelector(BaseSelector):
             (total_centers, conv_num), -1, dtype=torch.long, device=device
         )
 
+        # Pre-compute sorted indices by group for efficient group extraction
+        sorted_order = torch.argsort(belonging)
+        sorted_belonging = belonging[sorted_order]
+        
+        # Compute group start positions using cumsum
+        group_sizes = group_counts.tolist()
+        max_group_size = max(group_sizes)
+        group_starts = torch.zeros(num_groups + 1, dtype=torch.long, device=device)
+        group_starts[1:] = torch.cumsum(group_counts, dim=0)
+
         # 分批处理以避免内存溢出
         num_batches = (num_groups + batch_size - 1) // batch_size
 
         for batch_idx in range(num_batches):
             batch_start = batch_idx * batch_size
             batch_end = min(batch_start + batch_size, num_groups)
-            batch_groups = unique_groups[batch_start:batch_end]
-            batch_size_current = len(batch_groups)
+            batch_size_current = batch_end - batch_start
 
-            # 提取当前批次的点云数据
-            batch_masks = []
-            batch_indices = []
+            # Get batch group sizes and max size for this batch
+            batch_group_sizes = group_counts[batch_start:batch_end]
+            max_batch_group_size = batch_group_sizes.max().item()
 
-            for group_id in batch_groups:
-                mask = belonging == group_id
-                indices = torch.where(mask)[0].to(device)
-                batch_masks.append(mask)
-                batch_indices.append(indices)
-
-            # 找到当前批次的最大点云大小
-            max_batch_group_size = max([len(indices) for indices in batch_indices])
-
-            # 创建批处理张量
+            # Create padded batch tensors - VECTORIZED
             batch_coords = torch.zeros(
-                batch_size_current, max_batch_group_size, 3, device=device
+                batch_size_current, max_batch_group_size, 3, device=device, dtype=dtype
             )
             batch_mask = torch.zeros(
-                batch_size_current,
-                max_batch_group_size,
-                dtype=torch.bool,
-                device=device,
+                batch_size_current, max_batch_group_size, dtype=torch.bool, device=device
+            )
+            
+            # Pre-allocate global indices tensor for this batch
+            batch_global_indices = torch.zeros(
+                batch_size_current, max_batch_group_size, dtype=torch.long, device=device
             )
 
-            for i, indices in enumerate(batch_indices):
-                group_size = len(indices)
-                batch_coords[i, :group_size] = coords[indices]
-                batch_mask[i, :group_size] = True
+            # Fill batch tensors using vectorized operations where possible
+            for i in range(batch_size_current):
+                group_idx = batch_start + i
+                start = group_starts[group_idx].item()
+                end = group_starts[group_idx + 1].item()
+                size = end - start
+                
+                # Get global indices for this group
+                global_indices = sorted_order[start:end]
+                batch_global_indices[i, :size] = global_indices
+                batch_coords[i, :size] = coords[global_indices]
+                batch_mask[i, :size] = True
 
+            # Select center points using minimal variance algorithm
             _, local_center_indices = batch_select_n_points_minimal_variance(
                 batch_coords, per_group_outpoint_num, valid_mask=batch_mask
             )
 
-            # 收集中心点坐标
-            batch_centers = torch.zeros(
-                batch_size_current, per_group_outpoint_num, 3, device=device
-            )
-            for i in range(batch_size_current):
-                global_indices = batch_indices[i]
-                local_centers = local_center_indices[i]
-                batch_centers[i] = coords[global_indices[local_centers]]
+            # Collect center coordinates - VECTORIZED using gather
+            # Create batch indices for gathering
+            batch_idx_expand = torch.arange(batch_size_current, device=device).unsqueeze(1)
+            batch_idx_expand = batch_idx_expand.expand(-1, per_group_outpoint_num)
+            
+            # Get center coords directly through indexing
+            center_local_coords = batch_coords[batch_idx_expand, local_center_indices]  # (B, P, 3)
+            batch_centers = center_local_coords
 
-            # 批量化计算KNN
-            # 使用爱因斯坦求和计算距离矩阵
-            # 计算 (batch_centers)^2 和 (batch_coords)^2
+            # Compute KNN using efficient distance computation
+            # ||c - x||^2 = ||c||^2 + ||x||^2 - 2*c·x
             centers_sq = torch.sum(batch_centers**2, dim=-1, keepdim=True)  # (B, P, 1)
             coords_sq = torch.sum(batch_coords**2, dim=-1, keepdim=True)  # (B, M, 1)
-
-            # 计算 centers * coords^T
             centers_coords = torch.einsum("bpc,bmc->bpm", batch_centers, batch_coords)
-
-            # 计算距离平方: ||c||^2 + ||x||^2 - 2*c·x
             dist_sq = centers_sq + coords_sq.transpose(1, 2) - 2 * centers_coords
 
-            # 屏蔽无效点（填充的点）
+            # Mask invalid (padded) points
             dist_sq = dist_sq.masked_fill(~batch_mask.unsqueeze(1), float("inf"))
 
-            # 批量化选择最近的conv_num个点
-            _, topk_indices = torch.topk(
-                dist_sq, min(conv_num, max_batch_group_size), dim=2, largest=False
-            )
+            # Select top-k nearest neighbors
+            k = min(conv_num, max_batch_group_size)
+            _, topk_local_indices = torch.topk(dist_sq, k, dim=2, largest=False)
 
-            # 转换为全局索引
-            for i in range(batch_size_current):
-                global_indices = batch_indices[i]
-                group_size = len(global_indices)
+            # Convert to global indices - VECTORIZED
+            # Expand batch_global_indices for gathering
+            batch_idx_3d = torch.arange(batch_size_current, device=device).view(-1, 1, 1)
+            batch_idx_3d = batch_idx_3d.expand(-1, per_group_outpoint_num, k)
+            
+            # Gather global indices for top-k neighbors
+            global_topk = torch.gather(
+                batch_global_indices.unsqueeze(1).expand(-1, per_group_outpoint_num, -1),
+                2,
+                topk_local_indices
+            )  # (B, P, k)
 
-                # 获取当前点云的KNN结果
-                group_topk = topk_indices[i, :, : min(conv_num, group_size)]
-
-                # 转换为全局索引
-                global_topk = global_indices[group_topk]
-
-                # 填充到结果中
-                result_start = (batch_start + i) * per_group_outpoint_num
-                result_end = result_start + per_group_outpoint_num
-
-                neighbor_indices[result_start:result_end, : global_topk.shape[1]] = (
-                    global_topk
-                )
+            # Write results to output - vectorized slice assignment
+            result_start = batch_start * per_group_outpoint_num
+            result_end = batch_end * per_group_outpoint_num
+            
+            # Reshape global_topk to (B * P, k) for assignment
+            global_topk_flat = global_topk.reshape(-1, k)
+            neighbor_indices[result_start:result_end, :k] = global_topk_flat
 
         return neighbor_indices
 

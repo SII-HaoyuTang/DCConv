@@ -270,13 +270,24 @@ def profile_torch_profiler(model: nn.Module, pos: torch.Tensor, x: torch.Tensor,
     # Get key averages
     key_averages = prof.key_averages()
     
-    # Find top CUDA operations
+    # Find top CUDA operations - handle API differences between PyTorch versions
     cuda_ops = []
-    for item in sorted(key_averages, key=lambda x: x.cuda_time_total, reverse=True)[:15]:
+    
+    # Sort by CUDA time - try self_cuda_time_total first (newer API), fallback to cuda_time_total
+    def get_cuda_time(item):
+        if hasattr(item, 'self_cuda_time_total'):
+            return item.self_cuda_time_total
+        elif hasattr(item, 'cuda_time_total'):
+            return item.cuda_time_total
+        return 0
+    
+    for item in sorted(key_averages, key=get_cuda_time, reverse=True)[:15]:
+        cuda_time = get_cuda_time(item) / 1000  # Convert to ms
+        cpu_time = item.self_cpu_time_total / 1000 if hasattr(item, 'self_cpu_time_total') else item.cpu_time_total / 1000
         cuda_ops.append({
             "name": item.key,
-            "cuda_time_ms": item.cuda_time_total / 1000,
-            "cpu_time_ms": item.cpu_time_total / 1000,
+            "cuda_time_ms": cuda_time,
+            "cpu_time_ms": cpu_time,
             "calls": item.count,
         })
     

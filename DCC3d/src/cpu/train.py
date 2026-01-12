@@ -24,8 +24,8 @@ from module import DCConvNet
 
 def get_dataloader_cv(
     n_splits: int = 5,
-    batch_size: int = 256,
-    val_batch_size: int = 64,
+    batch_size: int = 32,
+    val_batch_size: int = 16,
     random_state: int = 42,
     normalize_target: bool = False,
     fold_index: int = None,
@@ -56,6 +56,7 @@ def get_dataloader_cv(
         cache_dir="./qm9_cache",
         force_reload=False,
         normalize_target=normalize_target,
+        min_atoms=20,
     )
 
     # 创建collator
@@ -284,7 +285,7 @@ def train_fold(
 
     # 使用MAE作为损失函数
     criterion = nn.L1Loss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.01)
 
     # 记录梯度统计
     wandb.watch(model, criterion, log="all", log_freq=100)
@@ -334,9 +335,16 @@ def train_fold(
             outputs = model(position_matrix, channel_matrix, belonging)
             loss = criterion(outputs, target)
 
+            # 添加 L1 正则化损失
+            # l1_reg_loss = model.get_l1_regularization_loss()
+            # if (l1_reg_loss >= loss):
+            #     total_loss = loss + l1_reg_loss
+            # else:
+            total_loss = loss
+
             # 反向传播
             optimizer.zero_grad()
-            loss.backward()
+            total_loss.backward()
 
             # 计算梯度范数
             total_norm = 0
@@ -590,10 +598,10 @@ def train_cross_validation(
     # 获取交叉验证数据生成器
     fold_generator = get_dataloader_cv(
         n_splits=n_splits,
-        batch_size=256,
-        val_batch_size=64,
+        batch_size=16,
+        val_batch_size=8,
         random_state=42,
-        normalize_target=False,
+        normalize_target=True,
     )
 
     # 存储每折的结果
@@ -911,10 +919,10 @@ def main():
             # 使用交叉验证函数获取单折数据
             train_loader, val_loader, test_loader = get_dataloader_cv(
                 n_splits=5,
-                batch_size=256,
-                val_batch_size=64,
+                batch_size=16,
+                val_batch_size=8,
                 random_state=42,
-                normalize_target=False,
+                normalize_target=True,
                 fold_index=0,  # 只取第一折
             )
 
@@ -937,7 +945,7 @@ def main():
 
             # 使用MAE损失
             criterion = nn.L1Loss()
-            optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+            optimizer = optim.Adam(model.parameters(), lr=learning_rate,weight_decay=0.001)
 
             # 学习率调度器
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -987,7 +995,7 @@ def main():
                     total_norm = total_norm**0.5
                     grad_norms.append(total_norm)
 
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
                     optimizer.step()
 
                     train_loss += loss.item()

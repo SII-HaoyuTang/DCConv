@@ -165,7 +165,7 @@ class DistanceContainedConv3d(nn.Module):
                 outpoint_num * space_num,
                 conv_num,
                 device=resnet_channel.device,
-            )  # Shape: (Co, Ci, outpoint_num, k)
+            ) / conv_num # Shape: (Co, Ci, outpoint_num, k)
 
             # Step 4‘: 特征聚合 (Feature Aggregation)
             # 使用聚合层进行加权求和

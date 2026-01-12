@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import pickle
 import os
 
@@ -41,12 +41,29 @@ class OptimizedQM9Dataset(Dataset):
         center_pos: bool = True,
         cache_dir: str = "./qm9_cache",
         force_reload: bool = False,
+        # 新增：原子数筛选参数
+        min_atoms: int = None,
+        max_atoms: int = None,
+        atoms_range: Tuple[int, int] = None,  # 替代min_atoms和max_atoms的元组形式
     ):
         """
         初始化优化的QM9数据集
 
         参数:
-            normalize_mass_charge: 是否对mass和charge进行归一化 (默认为True)
+            atoms_csv_path: 原子数据CSV路径
+            energy_csv_path: 能量数据CSV路径
+            target_column: 目标列名
+            device: 设备
+            transform: 数据变换
+            normalize_mass_charge: 是否对mass和charge进行归一化
+            normalize_target: 是否对目标值进行归一化
+            normalize_pos: 是否对位置进行归一化
+            center_pos: 是否将分子中心化
+            cache_dir: 缓存目录
+            force_reload: 是否强制重新加载
+            min_atoms: 最小原子数（包含）
+            max_atoms: 最大原子数（包含）
+            atoms_range: 原子数范围元组 (min_atoms, max_atoms)
         """
         super().__init__()
 
@@ -61,11 +78,24 @@ class OptimizedQM9Dataset(Dataset):
         self.cache_dir = cache_dir
         self.normalize_target = normalize_target
 
+        # 处理原子数筛选参数
+        if atoms_range is not None:
+            self.min_atoms_filter = atoms_range[0]
+            self.max_atoms_filter = atoms_range[1]
+        else:
+            self.min_atoms_filter = min_atoms
+            self.max_atoms_filter = max_atoms
+
         # 创建缓存目录
         os.makedirs(cache_dir, exist_ok=True)
 
-        # 缓存文件名
-        cache_file = os.path.join(cache_dir, f"dataset_cache_{target_column}.pkl")
+        # 缓存文件名 - 包含筛选条件
+        cache_name = f"dataset_cache_{target_column}"
+        if self.min_atoms_filter is not None:
+            cache_name += f"_min{self.min_atoms_filter}"
+        if self.max_atoms_filter is not None:
+            cache_name += f"_max{self.max_atoms_filter}"
+        cache_file = os.path.join(cache_dir, f"{cache_name}.pkl")
 
         # 尝试加载缓存
         if not force_reload and os.path.exists(cache_file):
@@ -73,6 +103,9 @@ class OptimizedQM9Dataset(Dataset):
             try:
                 self._load_from_cache(cache_file)
                 print(f"缓存加载成功: {self.num_molecules} 个分子")
+                print(
+                    f"筛选条件: 原子数范围 [{self.min_atoms_filter}, {self.max_atoms_filter}]"
+                )
                 return
             except Exception as e:
                 print(f"缓存加载失败: {e}，重新从CSV加载")
@@ -101,9 +134,37 @@ class OptimizedQM9Dataset(Dataset):
             unknown_elements = atoms_df.loc[unknown_mask, "element"].unique()
             print(f"警告: 为未知元素设置默认质量 {default_mass}: {unknown_elements}")
 
-        # 获取所有唯一的分子ID并排序
-        self.molecule_ids = sorted(atoms_df["mol_id"].unique())
+        # 按分子分组并计算每个分子的原子数
+        print("正在计算每个分子的原子数...")
+        atoms_by_molecule = atoms_df.groupby("mol_id")
+        molecule_atom_counts = atoms_by_molecule.size()
+
+        # 筛选分子
+        print("正在筛选分子...")
+        valid_molecule_ids = []
+
+        for mol_id, atom_count in molecule_atom_counts.items():
+            # 检查是否满足筛选条件
+            if self.min_atoms_filter is not None and atom_count < self.min_atoms_filter:
+                continue
+            if self.max_atoms_filter is not None and atom_count > self.max_atoms_filter:
+                continue
+            valid_molecule_ids.append(mol_id)
+
+        # 获取所有有效的分子ID并排序
+        self.molecule_ids = sorted(valid_molecule_ids)
         self.num_molecules = len(self.molecule_ids)
+
+        print(f"原始分子总数: {len(molecule_atom_counts)}")
+        print(f"筛选后分子数: {self.num_molecules}")
+
+        if self.min_atoms_filter is not None or self.max_atoms_filter is not None:
+            print(
+                f"筛选条件: 原子数范围 [{self.min_atoms_filter}, {self.max_atoms_filter}]"
+            )
+
+        if self.num_molecules == 0:
+            raise ValueError("没有满足筛选条件的分子！请调整原子数范围。")
 
         # 预处理数据：转换为numpy数组并预计算统计信息
         print("正在预处理数据...")
@@ -168,20 +229,42 @@ class OptimizedQM9Dataset(Dataset):
         """计算统计信息"""
         print("正在计算统计信息...")
 
-        # 位置统计
-        all_positions = atoms_df[["x", "y", "z"]].values
-        self.pos_mean = np.mean(all_positions, axis=0, dtype=np.float32)
-        self.pos_std = np.std(all_positions, axis=0, dtype=np.float32)
+        # 位置统计 - 仅使用筛选后的分子
+        all_positions = []
+        for pos in self.all_positions:
+            all_positions.append(pos)
+        all_positions_array = np.vstack(all_positions)
+
+        self.pos_mean = np.mean(all_positions_array, axis=0, dtype=np.float32)
+        self.pos_std = np.std(all_positions_array, axis=0, dtype=np.float32)
         self.pos_std = np.where(self.pos_std == 0, 1.0, self.pos_std)
 
-        # mass和charge统计（用于归一化）
-        self.mass_mean = float(atoms_df["mass"].mean())
-        self.mass_std = float(atoms_df["mass"].std())
-        self.mass_std = self.mass_std if self.mass_std != 0 else 1.0
+        # mass和charge统计（用于归一化）- 仅使用筛选后的分子
+        all_mass = []
+        all_charge = []
+        for features in self.all_features:
+            if features.shape[1] >= 1:
+                all_mass.append(features[:, 0])
+            if features.shape[1] >= 2:
+                all_charge.append(features[:, 1])
 
-        self.charge_mean = float(atoms_df["charge"].mean())
-        self.charge_std = float(atoms_df["charge"].std())
-        self.charge_std = self.charge_std if self.charge_std != 0 else 1.0
+        if all_mass:
+            all_mass_array = np.concatenate(all_mass)
+            self.mass_mean = float(np.mean(all_mass_array))
+            self.mass_std = float(np.std(all_mass_array))
+            self.mass_std = self.mass_std if self.mass_std != 0 else 1.0
+        else:
+            self.mass_mean = 0.0
+            self.mass_std = 1.0
+
+        if all_charge:
+            all_charge_array = np.concatenate(all_charge)
+            self.charge_mean = float(np.mean(all_charge_array))
+            self.charge_std = float(np.std(all_charge_array))
+            self.charge_std = self.charge_std if self.charge_std != 0 else 1.0
+        else:
+            self.charge_mean = 0.0
+            self.charge_std = 1.0
 
         # 目标值统计
         self.target_mean = float(np.mean(targets))
@@ -206,9 +289,10 @@ class OptimizedQM9Dataset(Dataset):
             print("正在预归一化mass和charge特征...")
             for i in range(self.num_molecules):
                 features = self.all_features[i]
-                if features.shape[1] >= 2:
+                if features.shape[1] >= 1:
                     # 归一化mass
                     features[:, 0] = (features[:, 0] - self.mass_mean) / self.mass_std
+                if features.shape[1] >= 2:
                     # 归一化charge
                     features[:, 1] = (
                         features[:, 1] - self.charge_mean
@@ -229,7 +313,7 @@ class OptimizedQM9Dataset(Dataset):
             ) / self.target_std
         else:
             # 如果不归一化，直接使用原始值
-            self.molecule_targets = targets
+            pass  # self.molecule_targets 已经是原始值
 
     def _save_to_cache(self, cache_file: str):
         """保存处理后的数据到缓存"""
@@ -257,6 +341,8 @@ class OptimizedQM9Dataset(Dataset):
             "normalize_mass_charge": self.normalize_mass_charge,
             "normalize_pos": self.normalize_pos,
             "center_pos": self.center_pos,
+            "min_atoms_filter": self.min_atoms_filter,
+            "max_atoms_filter": self.max_atoms_filter,
         }
 
         with open(cache_file, "wb") as f:
@@ -337,6 +423,61 @@ class OptimizedQM9Dataset(Dataset):
 
         return info
 
+    def get_atom_count_distribution(self) -> Dict[int, int]:
+        """
+        获取原子数分布
+
+        返回:
+            字典，键为原子数，值为该原子数的分子数量
+        """
+        distribution = {}
+        for count in self.molecule_atom_counts:
+            distribution[count] = distribution.get(count, 0) + 1
+
+        return dict(sorted(distribution.items()))
+
+    def filter_by_atom_count(
+        self, min_atoms: int, max_atoms: int
+    ) -> "OptimizedQM9Dataset":
+        """
+        基于原子数筛选分子，返回新的数据集实例
+
+        参数:
+            min_atoms: 最小原子数
+            max_atoms: 最大原子数
+
+        返回:
+            新的数据集实例
+        """
+        # 创建新的筛选范围
+        new_min = (
+            max(self.min_atoms_filter, min_atoms)
+            if self.min_atoms_filter is not None
+            else min_atoms
+        )
+        new_max = (
+            min(self.max_atoms_filter, max_atoms)
+            if self.max_atoms_filter is not None
+            else max_atoms
+        )
+
+        # 创建新的数据集实例
+        return OptimizedQM9Dataset(
+            atoms_csv_path=self.atoms_csv_path,
+            energy_csv_path=self.energy_csv_path,
+            target_column=self.target_column,
+            device=self.device,
+            transform=self.transform,
+            normalize_mass_charge=self.normalize_mass_charge,
+            normalize_target=self.normalize_target,
+            normalize_pos=self.normalize_pos,
+            center_pos=self.center_pos,
+            cache_dir=self.cache_dir,
+            force_reload=False,  # 会尝试从缓存加载
+            min_atoms=new_min,
+            max_atoms=new_max,
+        )
+
 
 class OptimizedQM9Collater:
     """
@@ -384,75 +525,110 @@ class OptimizedQM9Collater:
 # 使用示例和性能测试
 if __name__ == "__main__":
     import time
+    import matplotlib.pyplot as plt
 
     print("测试优化的QM9数据集...")
 
     # 计时开始
     start_time = time.time()
 
-    # 创建数据集（首次运行会构建缓存，较慢）
-    dataset = OptimizedQM9Dataset(
+    # 示例1：创建包含20个原子以上分子的数据集
+    print("\n=== 示例1：筛选20个原子以上的分子 ===")
+    dataset_20plus = OptimizedQM9Dataset(
         atoms_csv_path="./QM9/qm9_atoms.csv",
         energy_csv_path="./QM9/qm9_energy.csv",
         target_column="atomization_energy",
-        normalize_mass_charge=True,  # 对mass和charge进行归一化
+        normalize_mass_charge=True,
         normalize_pos=False,
         center_pos=True,
         cache_dir="./qm9_cache",
-        force_reload=False,  # 设为True可强制重新构建缓存
-        normalize_target=False,
+        force_reload=False,
+        min_atoms=20,  # 只包含20个原子以上的分子
+        max_atoms=None,  # 不设上限
     )
 
     load_time = time.time() - start_time
     print(f"数据集加载时间: {load_time:.2f} 秒")
+    print(f"筛选后分子数: {len(dataset_20plus)}")
 
-    # 测试获取样本的速度
-    print("\n测试样本获取速度...")
-    test_start = time.time()
+    # 查看原子数分布
+    distribution = dataset_20plus.get_atom_count_distribution()
+    print(f"原子数分布: {distribution}")
 
-    # 获取多个样本
-    test_indices = list(range(min(100, len(dataset))))
-    samples = []
-    for idx in test_indices:
-        sample = dataset[idx]
-        samples.append(sample)
+    # 示例2：创建包含15-25个原子的分子数据集
+    print("\n=== 示例2：筛选15-25个原子的分子 ===")
+    dataset_15_25 = OptimizedQM9Dataset(
+        atoms_csv_path="./QM9/qm9_atoms.csv",
+        energy_csv_path="./QM9/qm9_energy.csv",
+        target_column="atomization_energy",
+        normalize_mass_charge=True,
+        normalize_pos=False,
+        center_pos=True,
+        cache_dir="./qm9_cache",
+        force_reload=False,
+        min_atoms=15,
+        max_atoms=25,
+    )
 
-    sample_time = time.time() - test_start
-    print(f"获取 {len(test_indices)} 个样本的时间: {sample_time:.2f} 秒")
-    print(f"平均每个样本: {sample_time / len(test_indices) * 1000:.2f} 毫秒")
+    print(f"筛选后分子数: {len(dataset_15_25)}")
+    distribution = dataset_15_25.get_atom_count_distribution()
+    print(f"原子数分布: {distribution}")
 
-    # 检查样本结构
-    sample = dataset[0]
-    print("\n单个样本结构:")
-    for key, value in sample.items():
-        if isinstance(value, torch.Tensor):
-            print(f"  {key}: {value.shape} | dtype: {value.dtype}")
-        else:
-            print(f"  {key}: {value}")
+    # 示例3：使用atoms_range参数
+    print("\n=== 示例3：使用atoms_range参数 ===")
+    dataset_range = OptimizedQM9Dataset(
+        atoms_csv_path="./QM9/qm9_atoms.csv",
+        energy_csv_path="./QM9/qm9_energy.csv",
+        target_column="atomization_energy",
+        normalize_mass_charge=True,
+        normalize_pos=False,
+        center_pos=True,
+        cache_dir="./qm9_cache",
+        force_reload=False,
+        atoms_range=(20, 30),  # 使用元组形式指定范围
+    )
 
-    # 检查mass和charge是否已归一化
-    print("\n检查mass和charge归一化:")
-    print(f"  mass均值: {dataset.mass_mean:.4f}, 标准差: {dataset.mass_std:.4f}")
-    print(f"  charge均值: {dataset.charge_mean:.4f}, 标准差: {dataset.charge_std:.4f}")
+    print(f"筛选后分子数: {len(dataset_range)}")
+    distribution = dataset_range.get_atom_count_distribution()
+    print(f"原子数分布: {distribution}")
 
-    # 验证归一化效果
-    if len(samples) > 0:
-        all_mass = torch.cat([s["x"][:, 0] for s in samples])
-        all_charge = torch.cat([s["x"][:, 1] for s in samples])
+    # 可视化原子数分布
+    plt.figure(figsize=(10, 6))
 
-        print(
-            f"  归一化后mass均值: {all_mass.mean():.4f}, 标准差: {all_mass.std():.4f}"
-        )
-        print(
-            f"  归一化后charge均值: {all_charge.mean():.4f}, 标准差: {all_charge.std():.4f}"
-        )
+    # 获取三个数据集的分布
+    datasets = [
+        ("20+ 原子", dataset_20plus),
+        ("15-25 原子", dataset_15_25),
+        ("20-30 原子", dataset_range),
+    ]
+
+    for i, (name, dataset) in enumerate(datasets):
+        distribution = dataset.get_atom_count_distribution()
+        atoms = list(distribution.keys())
+        counts = list(distribution.values())
+
+        plt.subplot(1, 3, i + 1)
+        plt.bar(atoms, counts)
+        plt.title(f"{name}\n总分子数: {len(dataset)}")
+        plt.xlabel("原子数")
+        plt.ylabel("分子数量")
+        plt.tight_layout()
+
+    plt.suptitle("不同筛选条件下的原子数分布", fontsize=14, y=1.02)
+    plt.show()
+
+    # 测试获取样本
+    print("\n测试样本获取...")
+    sample = dataset_20plus[0]
+    print(f"样本原子数: {sample['num_atoms'].item()}")
+    print(f"样本特征形状: {sample['x'].shape}")
 
     # 创建collator和数据加载器
     collater = OptimizedQM9Collater()
 
     # 划分数据集
     print("\n划分数据集...")
-    total_size = len(dataset)
+    total_size = len(dataset_20plus)
     train_size = int(0.8 * total_size)
     val_size = int(0.1 * total_size)
     test_size = total_size - train_size - val_size
@@ -460,7 +636,7 @@ if __name__ == "__main__":
     from torch.utils.data import random_split
 
     train_dataset, val_dataset, test_dataset = random_split(
-        dataset, [train_size, val_size, test_size]
+        dataset_20plus, [train_size, val_size, test_size]
     )
 
     print(f"数据集划分: 训练集={train_size}, 验证集={val_size}, 测试集={test_size}")
@@ -487,8 +663,9 @@ if __name__ == "__main__":
         print(f"  目标形状: {batch['y'].shape}")
         print(f"  原子数: {batch['num_atoms'].shape}")
 
-        # 确认没有不必要的字段
-        print(f"  批次中包含的键: {list(batch.keys())}")
+        # 计算批次中的平均原子数
+        avg_atoms = batch["num_atoms"].float().mean().item()
+        print(f"  批次平均原子数: {avg_atoms:.2f}")
 
         if batch_idx >= 2:  # 只查看前3个批次
             break
@@ -498,7 +675,8 @@ if __name__ == "__main__":
 
     # 显示统计信息
     print("\n数据集统计信息:")
-    print(f"  总分子数: {len(dataset)}")
-    print(f"  最大原子数: {dataset.max_atoms}")
-    print(f"  平均原子数: {dataset.avg_atoms:.2f}")
-    print(f"  是否对mass和charge归一化: {dataset.normalize_mass_charge}")
+    print(f"  总分子数: {len(dataset_20plus)}")
+    print(f"  筛选条件: 原子数 ≥ {dataset_20plus.min_atoms_filter}")
+    print(f"  实际原子数范围: {dataset_20plus.min_atoms} - {dataset_20plus.max_atoms}")
+    print(f"  平均原子数: {dataset_20plus.avg_atoms:.2f}")
+    print(f"  是否对mass和charge归一化: {dataset_20plus.normalize_mass_charge}")
